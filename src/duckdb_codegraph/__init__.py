@@ -25,8 +25,10 @@ from duckdb_codegraph.models import (
     Node,
     Report,
 )
+from duckdb_codegraph.store import CodeGraphStore, ReadOnlyError
 
 __all__ = [
+    "CodeGraphStore",
     "Edge",
     "Explanation",
     "ExplanationResult",
@@ -38,6 +40,7 @@ __all__ = [
     "JsTsExtractor",
     "Node",
     "PythonExtractor",
+    "ReadOnlyError",
     "Report",
     "Settings",
     "compute_etag",
