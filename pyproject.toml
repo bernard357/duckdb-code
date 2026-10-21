@@ -1,0 +1,88 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "duckdb-codegraph"
+dynamic = ["version"]
+description = "Frugal, embeddable code-graph building block for agentic systems — tree-sitter impact analysis and structure explanation over a local DuckDB file, no external service."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Bernard Paques", email = "bernard.paques@gmail.com" }]
+keywords = [
+    "duckdb",
+    "code-graph",
+    "tree-sitter",
+    "impact-analysis",
+    "static-analysis",
+    "ast",
+    "agents",
+    "mcp",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Database",
+    "Typing :: Typed",
+]
+dependencies = [
+    "duckdb>=1.1",
+    "pydantic>=2.6",
+    "typer>=0.12",
+    "pyyaml>=6",
+    "mcp>=2.3",
+    "tree-sitter>=0.23",
+    "tree-sitter-language-pack>=0.7",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11"]
+
+[project.scripts]
+duckdb-codegraph = "duckdb_codegraph.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/bernard357/duckdb-codegraph"
+Repository = "https://github.com/bernard357/duckdb-codegraph"
+Documentation = "https://bernard357.github.io/duckdb-codegraph/"
+Issues = "https://github.com/bernard357/duckdb-codegraph/issues"
+Changelog = "https://github.com/bernard357/duckdb-codegraph/blob/main/CHANGES.md"
+
+# Version is derived from the latest git tag (e.g. a v0.1.0 tag yields 0.1.0).
+# Between tags, hatch-vcs appends a dev/commit suffix. There is no version
+# string to bump by hand: tag the release and the build picks it up.
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/duckdb_codegraph"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: tests that take more than 200ms"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src/duckdb_codegraph"]
+warn_unused_ignores = true
+
+# Core parsing and server dependencies ship no type stubs; their imports are
+# lazy and isolated behind the extractor registry, so ignore their missing
+# stubs rather than vendor third-party type packages.
+[[tool.mypy.overrides]]
+module = ["tree_sitter", "tree_sitter_language_pack", "mcp.*", "yaml"]
+ignore_missing_imports = true
