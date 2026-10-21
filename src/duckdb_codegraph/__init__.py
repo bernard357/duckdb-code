@@ -16,6 +16,7 @@ from duckdb_codegraph.extractors.registry import (
     resolve_extractor,
 )
 from duckdb_codegraph.indexer import IndexReport, index_folder
+from duckdb_codegraph.mcp_server import build_server
 from duckdb_codegraph.models import (
     Edge,
     Explanation,
@@ -43,6 +44,7 @@ __all__ = [
     "ReadOnlyError",
     "Report",
     "Settings",
+    "build_server",
     "compute_etag",
     "detect_language",
     "index_folder",

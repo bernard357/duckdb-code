@@ -1,0 +1,3 @@
+A non-source asset in a sub-folder with no indexable files. detect_language
+returns None for .txt, so the indexer counts this file as skipped and the
+assets/ folder contributes zero nodes and zero edges (exercises fix 6).

@@ -22,9 +22,10 @@ def test_index_folder_counts(tmp_path):
     finally:
         pass
 
-    # Source files: 4 python (charge, billing, premium, __init__, leaf) + 2 ts.
-    # README.txt has no language -> skipped.
-    assert report.skipped == 1
+    # Source files: 5 python (charge, billing, premium, __init__, leaf) + 2 ts.
+    # README.txt and assets/data.txt have no language -> skipped (fix 6: a
+    # no-indexable sub-folder contributes nothing and never errors).
+    assert report.skipped == 2
     assert report.indexed == report.files - report.skipped
     assert report.languages.get("python", 0) == 5
     assert report.languages.get("typescript", 0) == 2
