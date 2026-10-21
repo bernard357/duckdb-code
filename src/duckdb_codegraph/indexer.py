@@ -1,0 +1,455 @@
+"""Index a folder of source code into a code-graph store.
+
+Walks the folder, routes each file to its language extractor, resolves the
+cross-file edges against an in-memory symbol table (a pure function — no
+DuckDB), and writes the resolved graph into the store.
+
+v1 build mode is a FULL REBUILD by table recreation: at run start the three
+graph tables and ``files`` are dropped+recreated and ``meta`` cleared (then the
+read-write indexes are recreated via the store's ``_ensure_schema``), so a run
+against an existing database yields exactly the same content as a run against a
+fresh file. The per-file delete-then-insert (:func:`_rebuild_file`) is reserved
+for the incremental seam and is NOT called by the full-build path; it is proven
+in isolation by the seam test.
+"""
+
+import datetime
+import logging
+from pathlib import Path, PurePosixPath
+
+from pydantic import BaseModel
+
+from duckdb_codegraph.etag import compute_etag
+from duckdb_codegraph.extractors.base import Extraction
+from duckdb_codegraph.extractors.python import UNRESOLVED
+from duckdb_codegraph.extractors.registry import detect_language, resolve_extractor
+from duckdb_codegraph.models import Edge, Node
+from duckdb_codegraph.store import INDEX_DDL, SCHEMA_DDL, SCHEMA_VERSION, CodeGraphStore
+
+logger = logging.getLogger(__name__)
+
+# The cross-file edge kinds, resolved by the resolution pass.
+_IMPORT_KINDS = ("imports",)
+_SCOPED_KINDS = ("inherits", "calls", "references")
+
+# The fixed extension order the JS/TS specifier resolver tries (NFR 2).
+_JS_TS_EXTENSIONS = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
+_JS_TS_LANGUAGES = frozenset({"javascript", "typescript"})
+
+
+class IndexReport(BaseModel):
+    """Outcome of an :func:`index_folder` run."""
+
+    files: int = 0
+    indexed: int = 0
+    skipped: int = 0
+    nodes: int = 0
+    edges: int = 0
+    languages: dict[str, int] = {}
+
+
+def _raw_target(dst_id: str) -> str:
+    """Recover the raw target string from an unresolved edge ``dst_id``."""
+    return dst_id[len(UNRESOLVED) :] if dst_id.startswith(UNRESOLVED) else dst_id
+
+
+def _is_unresolved(edge: Edge) -> bool:
+    return edge.dst_id.startswith(UNRESOLVED)
+
+
+def _module_of_path(path: str, by_path_module: dict[str, str]) -> str | None:
+    return by_path_module.get(path)
+
+
+def resolve_edges(nodes: list[Node], edges: list[Edge]) -> list[Edge]:
+    """Resolve the unresolved cross-file edges against a symbol table.
+
+    Pure function (no DuckDB): deterministic and unit-testable in isolation. The
+    order is load-bearing — ``by_qn``/``by_module`` are built first, the
+    module-local-defines half of ``by_local`` is SEEDED (fix 1, a pure string
+    test), then Phase A resolves ``imports`` (each binding also populating the
+    import half of ``by_local``), then Phase B resolves ``inherits`` and
+    ``calls``/``references`` reading the now-complete ``by_local`` WITHOUT
+    mutating it.
+
+    ``defines`` edges pass through unchanged (always ``exact``). An unresolved
+    edge that binds to zero in-set nodes is dropped (never fabricated).
+    """
+    by_qn: dict[str, list[str]] = {}
+    by_module: dict[str, str] = {}
+    by_path_module: dict[str, str] = {}
+    node_by_id: dict[str, Node] = {}
+    js_ts_modules: dict[str, str] = {}
+
+    for node in nodes:
+        node_by_id[node.node_id] = node
+        by_qn.setdefault(node.qualified_name, []).append(node.node_id)
+        if node.kind == "module":
+            by_module[node.qualified_name] = node.node_id
+            by_path_module[node.path] = node.qualified_name
+            if node.language in _JS_TS_LANGUAGES:
+                js_ts_modules[node.qualified_name] = node.node_id
+
+    # Seed half of by_local (fix 1): PURE STRING TEST. A class/function node
+    # whose qualified_name == f"{m_qn}.{name}" is a module-top-level define
+    # (its module qn is the immediate dotted prefix, no intervening scope
+    # segment). Methods and nested functions are excluded because an
+    # intervening scope segment sits between the module qn and the name.
+    by_local: dict[tuple[str, str], list[str]] = {}
+    for node in nodes:
+        if node.kind not in ("class", "function"):
+            continue
+        m_qn = by_path_module.get(node.path)
+        if m_qn is None:
+            continue
+        if node.qualified_name == f"{m_qn}.{node.name}":
+            by_local.setdefault((m_qn, node.name), []).append(node.node_id)
+
+    resolved: list[Edge] = []
+
+    # defines edges pass through untouched.
+    for edge in edges:
+        if edge.kind == "defines":
+            resolved.append(edge)
+
+    # Phase A: imports. Each successful binding also inserts the bound local
+    # name into the import half of by_local.
+    for edge in edges:
+        if edge.kind not in _IMPORT_KINDS or not _is_unresolved(edge):
+            continue
+        src = node_by_id.get(edge.src_id)
+        module_qn = by_path_module.get(src.path) if src else None
+        raw = _raw_target(edge.dst_id)
+        src_node = node_by_id.get(edge.src_id)
+        is_js_ts = src_node is not None and src_node.language in _JS_TS_LANGUAGES
+        if is_js_ts:
+            hit = _resolve_js_specifier(raw, src.path if src else "", js_ts_modules)
+            if hit is not None:
+                resolved.append(_bind(edge, hit, "best_effort"))
+            continue
+        # Python import: try "from M import N" -> by_qn["M.N"], else the dotted
+        # path as a module -> by_module; else the head module.
+        targets, resolution = _resolve_python_import(raw, by_qn, by_module)
+        for target in targets:
+            resolved.append(_bind(edge, target, resolution))
+            if module_qn is not None:
+                bound = raw.split(".")[-1] if "." in raw else raw
+                by_local.setdefault((module_qn, bound), []).append(target)
+                # import M also binds the head name M.
+                head = raw.split(".")[0]
+                by_local.setdefault((module_qn, head), []).append(target)
+
+    # Phase B: inherits, then calls/references. Reads by_local, never mutates it.
+    for edge in edges:
+        if edge.kind not in _SCOPED_KINDS or not _is_unresolved(edge):
+            continue
+        src = node_by_id.get(edge.src_id)
+        module_qn = by_path_module.get(src.path) if src else None
+        raw = _raw_target(edge.dst_id)
+        is_js_ts = src is not None and src.language in _JS_TS_LANGUAGES
+        for dst_id, resolution in _resolve_scoped(
+            edge.kind, raw, module_qn, by_local, by_qn, is_js_ts
+        ):
+            resolved.append(_bind(edge, dst_id, resolution))
+
+    return resolved
+
+
+def _bind(edge: Edge, dst_id: str, resolution: str) -> Edge:
+    return Edge(
+        src_id=edge.src_id,
+        dst_id=dst_id,
+        kind=edge.kind,
+        path=edge.path,
+        resolution=resolution,
+    )
+
+
+def _resolve_python_import(
+    raw: str, by_qn: dict[str, list[str]], by_module: dict[str, str]
+) -> tuple[list[str], str]:
+    """Resolve a Python import raw target to in-set node ids.
+
+    ``from M import N`` arrives as ``M.N`` and resolves via ``by_qn``; ``import
+    M`` arrives as ``M`` and resolves via ``by_module``. A single scoped hit is
+    exact; multiple candidates are best_effort; zero hits drop the edge.
+    """
+    qn_hits = by_qn.get(raw)
+    if qn_hits:
+        return qn_hits, ("exact" if len(qn_hits) == 1 else "best_effort")
+    module_hit = by_module.get(raw)
+    if module_hit is not None:
+        return [module_hit], "exact"
+    return [], "best_effort"
+
+
+def _resolve_scoped(
+    kind: str,
+    raw: str,
+    module_qn: str | None,
+    by_local: dict[tuple[str, str], list[str]],
+    by_qn: dict[str, list[str]],
+    is_js_ts: bool,
+) -> list[tuple[str, str]]:
+    """Resolve an inherits/calls/references edge to ``(dst_id, resolution)``.
+
+    Bare name -> ``by_local[(module, name)]`` (exact on a single hit, else
+    best_effort). Attribute tail / suffix -> ``by_qn`` suffix match, always
+    best_effort (fix 5). Zero in-set nodes -> empty (the edge is dropped). Every
+    JS/TS edge is best_effort.
+    """
+    if module_qn is not None:
+        local = by_local.get((module_qn, raw))
+        if local:
+            if len(local) == 1 and not is_js_ts:
+                return [(local[0], "exact")]
+            return [(nid, "best_effort") for nid in local]
+    # Suffix match on the tail: every qualified_name whose last segment == raw.
+    suffix_hits = [
+        nid for qn, nids in by_qn.items() for nid in nids if qn.split(".")[-1] == raw
+    ]
+    if suffix_hits:
+        return [(nid, "best_effort") for nid in suffix_hits]
+    return []
+
+
+def _resolve_js_specifier(
+    specifier: str, importing_path: str, js_ts_modules: dict[str, str]
+) -> str | None:
+    """Resolve a relative JS/TS import specifier to an in-set module node id.
+
+    Joins the specifier to the importing file's directory, normalizes ``.``/
+    ``..`` to a folder-relative POSIX path, then tries candidate stored module
+    qualified names in the fixed order: the normalized path exactly (if it
+    carries a known JS/TS extension); the normalized path with each extension
+    appended; then ``<norm>/index.<ext>`` — first in-set hit wins. A bare
+    (non-relative) specifier never resolves.
+    """
+    if not specifier.startswith("."):
+        return None
+    base_dir = PurePosixPath(importing_path).parent
+    joined = base_dir / specifier
+    # Normalize . and .. segments manually against the folder-relative root.
+    parts: list[str] = []
+    for part in joined.parts:
+        if part == ".":
+            continue
+        if part == "..":
+            if parts:
+                parts.pop()
+            continue
+        parts.append(part)
+    norm = "/".join(parts)
+
+    # Module qualified names are stored without the extension, so each candidate
+    # stored path below is reduced to its extension-stripped module qn before
+    # the lookup. The order is fixed (NFR 2): exact (known ext), then each
+    # appended ext, then <norm>/index.<ext>.
+    candidates: list[str] = []
+    suffix = PurePosixPath(norm).suffix.lower()
+    if suffix in _JS_TS_EXTENSIONS:
+        candidates.append(_strip_ext(norm))
+    else:
+        candidates.extend(_strip_ext(f"{norm}{ext}") for ext in _JS_TS_EXTENSIONS)
+        candidates.extend(_strip_ext(f"{norm}/index{ext}") for ext in _JS_TS_EXTENSIONS)
+
+    for candidate in candidates:
+        hit = js_ts_modules.get(candidate)
+        if hit is not None:
+            return hit
+    return None
+
+
+def _strip_ext(path: str) -> str:
+    pure = PurePosixPath(path)
+    parent = str(pure.parent)
+    if parent in (".", ""):
+        return pure.stem
+    return f"{parent}/{pure.stem}"
+
+
+def index_folder(
+    store: CodeGraphStore,
+    folder: str | Path,
+    recursive: bool = True,
+) -> IndexReport:
+    """Index every source file under ``folder`` into ``store``.
+
+    v1 full rebuild: the three graph tables and ``files`` are recreated empty
+    and ``meta`` cleared before the walk, so re-running over the same folder
+    yields byte-identical rows and the same :class:`IndexReport` counts.
+    """
+    folder = Path(folder)
+    if not folder.is_dir():
+        raise NotADirectoryError(f"Not a directory: {folder}")
+
+    store._guard_writable()
+    _recreate_tables(store)
+
+    build_stamp = datetime.datetime.now(datetime.UTC)
+    paths = _iter_files(folder, recursive)
+
+    file_rows: list[tuple[str, str, str]] = []
+    all_nodes: list[Node] = []
+    all_edges: list[Edge] = []
+    languages: dict[str, int] = {}
+    report = IndexReport()
+
+    for abs_path in paths:
+        report.files += 1
+        rel = abs_path.relative_to(folder).as_posix()
+        language = detect_language(rel)
+        if language is None:
+            report.skipped += 1
+            continue
+        try:
+            raw = abs_path.read_bytes()
+        except OSError as exc:  # pragma: no cover - rare mid-walk vanish
+            report.skipped += 1
+            logger.warning("skipping unreadable file %s: %s", rel, exc)
+            continue
+        text = raw.decode("utf-8", errors="replace")
+        etag = compute_etag(text)
+        extractor = resolve_extractor(language)
+        extraction = extractor.extract(text, rel)
+        all_nodes.extend(extraction.nodes)
+        all_edges.extend(extraction.edges)
+        file_rows.append((rel, language, etag))
+        report.indexed += 1
+        languages[language] = languages.get(language, 0) + 1
+
+    resolved_edges = resolve_edges(all_nodes, all_edges)
+
+    _write(store, file_rows, all_nodes, resolved_edges, build_stamp, folder)
+
+    report.nodes = len(all_nodes)
+    report.edges = len(resolved_edges)
+    report.languages = languages
+    return report
+
+
+def _iter_files(folder: Path, recursive: bool) -> list[Path]:
+    pattern = "**/*" if recursive else "*"
+    return sorted(p for p in folder.glob(pattern) if p.is_file())
+
+
+def _recreate_tables(store: CodeGraphStore) -> None:
+    """Drop and recreate the content tables for a v1 full rebuild.
+
+    Schema/index DDL is owned by the store so the indexer's recreation and
+    ``_ensure_schema`` agree.
+    """
+    con = store._con
+    for table in ("edges", "nodes", "files", "meta"):
+        con.execute(f"DROP TABLE IF EXISTS {table}")
+    for ddl in SCHEMA_DDL:
+        con.execute(ddl)
+    for ddl in INDEX_DDL:
+        con.execute(ddl)
+
+
+def _write(
+    store: CodeGraphStore,
+    file_rows: list[tuple[str, str, str]],
+    nodes: list[Node],
+    edges: list[Edge],
+    build_stamp: datetime.datetime,
+    folder: Path,
+) -> None:
+    """Bulk-insert files, nodes, edges and persist meta.
+
+    FIX 3: every ``files`` row carries ``stamped_at`` set to the build-start
+    time. It is WRITTEN but not read in v1 — it is reserved for the incremental
+    pass, which will compare a file's stored etag/stamp to decide whether to
+    rebuild it. Keep it, it is not dead.
+    """
+    con = store._con
+    for path, language, etag in file_rows:
+        con.execute(
+            "INSERT INTO files (path, language, etag, stamped_at) VALUES (?, ?, ?, ?)",
+            [path, language, etag, build_stamp],
+        )
+    for node in nodes:
+        con.execute(
+            """
+            INSERT INTO nodes
+                (node_id, kind, name, qualified_name, path,
+                 start_line, end_line, language)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                node.node_id,
+                node.kind,
+                node.name,
+                node.qualified_name,
+                node.path,
+                node.start_line,
+                node.end_line,
+                node.language,
+            ],
+        )
+    for edge in edges:
+        con.execute(
+            "INSERT INTO edges (src_id, dst_id, kind, path, resolution) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [edge.src_id, edge.dst_id, edge.kind, edge.path, edge.resolution],
+        )
+    con.execute(
+        "INSERT INTO meta (key, value) VALUES (?, ?)",
+        ["schema_version", str(SCHEMA_VERSION)],
+    )
+    con.execute(
+        "INSERT INTO meta (key, value) VALUES (?, ?)",
+        ["root", str(folder)],
+    )
+
+
+def _rebuild_file(
+    store: CodeGraphStore,
+    path: str,
+    extraction: Extraction,
+    language: str,
+    etag: str,
+    stamp: datetime.datetime,
+) -> None:
+    """Delete one file's rows across all three tables and re-insert them.
+
+    This is the file-keyed incremental seam. In v1 it is exercised ONLY by the
+    seam test, never by the full-build :func:`index_folder` path. Deleting
+    ``WHERE path = ?`` removes exactly that file's contribution; re-inserting
+    the extraction's rows rebuilds it, leaving every other file untouched.
+    """
+    store._guard_writable()
+    con = store._con
+    con.execute("DELETE FROM edges WHERE path = ?", [path])
+    con.execute("DELETE FROM nodes WHERE path = ?", [path])
+    con.execute("DELETE FROM files WHERE path = ?", [path])
+    con.execute(
+        "INSERT INTO files (path, language, etag, stamped_at) VALUES (?, ?, ?, ?)",
+        [path, language, etag, stamp],
+    )
+    for node in extraction.nodes:
+        con.execute(
+            """
+            INSERT INTO nodes
+                (node_id, kind, name, qualified_name, path,
+                 start_line, end_line, language)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                node.node_id,
+                node.kind,
+                node.name,
+                node.qualified_name,
+                node.path,
+                node.start_line,
+                node.end_line,
+                node.language,
+            ],
+        )
+    for edge in extraction.edges:
+        con.execute(
+            "INSERT INTO edges (src_id, dst_id, kind, path, resolution) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [edge.src_id, edge.dst_id, edge.kind, edge.path, edge.resolution],
+        )
