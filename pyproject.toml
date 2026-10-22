@@ -77,7 +77,7 @@ markers = ["slow: tests that take more than 200ms"]
 
 [tool.mypy]
 python_version = "3.12"
-files = ["src/duckdb_codegraph"]
+files = ["src/duckdb_codegraph", "scripts"]
 warn_unused_ignores = true
 
 # Core parsing and server dependencies ship no type stubs; their imports are

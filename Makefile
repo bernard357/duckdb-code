@@ -3,6 +3,7 @@ help:
 	@echo "$$ make setup     - Check prerequisites, create the venv, install tooling"
 	@echo "$$ make lint      - Run Ruff and Markdown lint checks"
 	@echo "$$ make test      - Run the pytest suite"
+	@echo "$$ make test-local - Self-parse: run duckdb-codegraph against its own source"
 	@echo "$$ make format    - Format Python code with Ruff"
 	@echo "$$ make build     - Build the wheel and sdist with uv"
 	@echo "$$ make clean     - Remove build artifacts and caches"
@@ -19,7 +20,7 @@ DUCKDB_CODEGRAPH_DB_PATH ?= codegraph.duckdb
 # default Python path for imports
 PYTHONPATH ?= .
 # source locations for static analysis
-PYTHON_PATHS := src/ tests/
+PYTHON_PATHS := src/ tests/ scripts/
 # markdown files for static analysis
 MARKDOWN_FILES := README.md AGENTS.md
 
@@ -69,6 +70,10 @@ format:
 test:
 	@echo "Running tests..."
 	.venv/bin/pytest -q
+
+test-local:
+	@echo "Self-parsing the package source with duckdb-codegraph..."
+	.venv/bin/python scripts/test_local.py
 
 build:
 	@echo "Building wheel and sdist..."
