@@ -3,7 +3,7 @@ help:
 	@echo "$$ make setup     - Check prerequisites, create the venv, install tooling"
 	@echo "$$ make lint      - Run Ruff and Markdown lint checks"
 	@echo "$$ make test      - Run the pytest suite"
-	@echo "$$ make test-local - Self-parse: run duckdb-codegraph against its own source"
+	@echo "$$ make self-test - Capability evidence: run duckdb-codegraph on its own source"
 	@echo "$$ make format    - Format Python code with Ruff"
 	@echo "$$ make build     - Build the wheel and sdist with uv"
 	@echo "$$ make clean     - Remove build artifacts and caches"
@@ -71,9 +71,9 @@ test:
 	@echo "Running tests..."
 	.venv/bin/pytest -q
 
-test-local:
-	@echo "Self-parsing the package source with duckdb-codegraph..."
-	.venv/bin/python scripts/test_local.py
+self-test:
+	@echo "Running the self-test capability evidence suite..."
+	.venv/bin/python scripts/self_test.py
 
 build:
 	@echo "Building wheel and sdist..."

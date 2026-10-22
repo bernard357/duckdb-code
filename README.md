@@ -121,7 +121,7 @@ Drive common tasks through `make`; do not call the underlying tools directly:
 - `make setup` — check and install the development toolchain
 - `make lint` / `make format` — check / apply ruff, mypy, markdownlint.
 - `make test` — run the pytest suite.
-- `make test-local` — self-parse check: index the package's own source with `duckdb-codegraph` and assert known structural facts about the resulting graph. Dogfoods the tool on a real multi-module codebase, distinct from the hermetic `make test` suite.
+- `make self-test` — capability evidence: index the package's own source with `duckdb-codegraph` and run a sequence of labelled requests (list files, list functions, change-impact traversal, cross-module symbol context, index overview, most-depended-upon hotspots), each printing a result and asserting a structural fact. Dogfoods the tool on a real multi-module codebase, distinct from the hermetic `make test` suite.
 - `make build` — build the wheel and sdist (version from the git tag via hatch-vcs).
 
 ## Project structure
