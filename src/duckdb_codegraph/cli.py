@@ -155,12 +155,36 @@ def explain(
 @app.command()
 def mcp(
     db: str | None = typer.Option(None, "--db", help="DuckDB file path."),
+    transport: str = typer.Option(
+        "stdio", "--transport", help="Transport to serve over: stdio|http."
+    ),
+    host: str = typer.Option(
+        "127.0.0.1", "--host", help="HTTP bind host (http transport only)."
+    ),
+    port: int = typer.Option(
+        8000, "--port", help="HTTP bind port (http transport only)."
+    ),
 ) -> None:
-    """Serve the read-only code-graph tools as an MCP server over stdio."""
-    from duckdb_codegraph.config import Settings
-    from duckdb_codegraph.mcp_server import run_stdio
+    """Serve the read-only code-graph tools as an MCP server.
 
-    run_stdio(Settings(db_path=db, read_only=True))
+    Defaults to stdio, the same-container subprocess transport. Pass
+    ``--transport http`` to serve Streamable HTTP, which binds loopback
+    ``127.0.0.1:8000`` (path ``/mcp``) by default. Serving stays read-only over
+    both transports.
+    """
+    from duckdb_codegraph.config import Settings
+    from duckdb_codegraph.mcp_server import run_http, run_stdio
+
+    settings = Settings(db_path=db, read_only=True)
+    if transport == "http":
+        run_http(settings, host=host, port=port)
+    elif transport == "stdio":
+        run_stdio(settings)
+    else:
+        raise typer.BadParameter(
+            f"unknown transport {transport!r}: choose 'stdio' or 'http'",
+            param_hint="--transport",
+        )
 
 
 if __name__ == "__main__":

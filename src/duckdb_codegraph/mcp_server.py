@@ -82,3 +82,20 @@ def _read_only(settings: Settings) -> Settings:
 def run_stdio(settings: Settings | None = None) -> None:
     """Build the server and serve it over stdio until the client disconnects."""
     build_server(settings).run(transport="stdio")
+
+
+def run_http(
+    settings: Settings | None = None,
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8000,
+) -> None:
+    """Serve the tools over Streamable HTTP, binding loopback by default.
+
+    Binds ``127.0.0.1:8000`` with the SDK's ``/mcp`` path unless ``host`` or
+    ``port`` override it. The same ``build_server(settings)`` and the same three
+    read-only tools serve over both transports, so the read-only serving
+    contract and per-tool JSON-object shapes are unchanged — only the wire
+    transport differs from :func:`run_stdio`.
+    """
+    build_server(settings).run(transport="streamable-http", host=host, port=port)

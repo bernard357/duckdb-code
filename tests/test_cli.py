@@ -144,3 +144,36 @@ def test_mcp_verb_is_wired():
     result = runner.invoke(app, ["mcp", "--help"])
     assert result.exit_code == 0, result.output
     assert "stdio" in result.output.lower()
+
+
+def test_mcp_http_transport_dispatches_to_run_http(monkeypatch):
+    # The verb imports the runners lazily from duckdb_codegraph.mcp_server; patch
+    # them there and assert --transport http routes to run_http with the parsed
+    # host/port and never touches run_stdio.
+    import duckdb_codegraph.mcp_server as mcp_server
+
+    calls = {}
+    monkeypatch.setattr(
+        mcp_server,
+        "run_http",
+        lambda settings, *, host, port: calls.update(host=host, port=port),
+    )
+    monkeypatch.setattr(
+        mcp_server, "run_stdio", lambda *a, **k: calls.update(stdio=True)
+    )
+    result = runner.invoke(
+        app, ["mcp", "--transport", "http", "--host", "0.0.0.0", "--port", "9001"]
+    )
+    assert result.exit_code == 0, result.output
+    assert calls == {"host": "0.0.0.0", "port": 9001}
+
+
+def test_mcp_default_dispatches_to_run_stdio(monkeypatch):
+    import duckdb_codegraph.mcp_server as mcp_server
+
+    calls = {}
+    monkeypatch.setattr(mcp_server, "run_stdio", lambda *a, **k: calls.update(stdio=1))
+    monkeypatch.setattr(mcp_server, "run_http", lambda *a, **k: calls.update(http=1))
+    result = runner.invoke(app, ["mcp"])
+    assert result.exit_code == 0, result.output
+    assert calls == {"stdio": 1}

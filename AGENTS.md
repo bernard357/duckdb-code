@@ -36,6 +36,16 @@ for hit in result.affected:
 
 An MCP client spawns `duckdb-codegraph mcp` as a child process in the same container and talks to it over stdin/stdout; stdio is a same-container transport, not a network protocol.
 
+The server also serves over **Streamable HTTP** with `--transport http`:
+
+```shell
+$ duckdb-codegraph mcp                                   # stdio (default)
+$ duckdb-codegraph mcp --transport http                  # http on 127.0.0.1:8000/mcp
+$ duckdb-codegraph mcp --transport http --host 127.0.0.1 --port 8000
+```
+
+HTTP binds loopback `127.0.0.1:8000` at path `/mcp` by default; `--host` and `--port` override it. Serving stays strictly read-only over both transports, which expose the identical `impact`, `explain`, and `report` tools with the same JSON-object shapes. The HTTP transport is the groundwork that will later let a client index a repository in a separate sandbox (for example a GitHub repository); that remote / sandbox indexing is **future work this transport enables**, not something shipped here.
+
 ## Setup for working on the package itself
 
 Requirements:

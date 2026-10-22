@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 
 import pytest
+from starlette.applications import Starlette
 
 from duckdb_codegraph.config import Settings
 from duckdb_codegraph.indexer import index_folder
@@ -44,6 +45,17 @@ def _result(db, name, args):
 
 def test_exactly_three_tools_registered(indexed_db):
     server = _server(indexed_db)
+    names = {tool.name for tool in asyncio.run(server.list_tools())}
+    assert names == {"impact", "explain", "report"}
+
+
+def test_streamable_http_app_carries_the_three_tools(indexed_db):
+    # HTTP wiring: the same build_server produces a Starlette app over the
+    # Streamable HTTP transport, with the identical three read-only tools and
+    # no network listener bound.
+    server = _server(indexed_db)
+    app = server.streamable_http_app()
+    assert isinstance(app, Starlette)
     names = {tool.name for tool in asyncio.run(server.list_tools())}
     assert names == {"impact", "explain", "report"}
 
