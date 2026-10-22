@@ -158,6 +158,7 @@ Settings resolve with the precedence: explicit argument >
 
 ## Pointers
 
+- Worked examples: [documentation/examples.md](documentation/examples.md) — the `make self-test` requests, explained with observed results.
 - Documentation site: <https://bernard357.github.io/duckdb-codegraph/>
 - PyPI project: <https://pypi.org/project/duckdb-codegraph/>
 
