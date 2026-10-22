@@ -116,6 +116,29 @@ def test_impact_depth_zero_has_no_affected(tmp_path):
     assert payload["affected"] == []
 
 
+def test_index_help_lists_rebuild_flag():
+    result = runner.invoke(app, ["index", "--help"])
+    assert result.exit_code == 0, result.output
+    assert "--rebuild" in result.output
+
+
+def test_index_rebuild_forces_full_and_plain_rerun_is_incremental(tmp_path):
+    db = str(tmp_path / "cli.duckdb")
+    first = runner.invoke(app, ["index", str(FIXTURE), "--db", db, "--json"])
+    assert first.exit_code == 0, first.output
+    assert json.loads(first.output)["mode"] == "full"
+
+    second = runner.invoke(app, ["index", str(FIXTURE), "--db", db, "--json"])
+    assert second.exit_code == 0, second.output
+    assert json.loads(second.output)["mode"] == "incremental"
+
+    forced = runner.invoke(
+        app, ["index", str(FIXTURE), "--db", db, "--rebuild", "--json"]
+    )
+    assert forced.exit_code == 0, forced.output
+    assert json.loads(forced.output)["mode"] == "full"
+
+
 def test_mcp_verb_is_wired():
     # Smoke: the command exists and is listed; we do not start the stdio loop.
     result = runner.invoke(app, ["mcp", "--help"])

@@ -24,6 +24,8 @@ for hit in result.affected:
 
 `impact` returns the affected set with per-node distance and resolution; `explain` returns a node's structural neighbourhood; `report` introspects the index.
 
+`store.index(folder)` (and `duckdb-codegraph index <folder>`) is incremental-by-default: a full rebuild runs when the database is empty or `rebuild=True` / `--rebuild` is passed, and otherwise only changed, added, and deleted files are reconciled. Change detection is etag-driven — each file's stored `etag` is compared against a freshly computed `compute_etag` fingerprint, the changed/added/deleted set is reconciled, and the global cross-file resolution is re-run so edges binding to a changed file are re-resolved. A no-change re-index is a no-op, and the incremental result is identical to a full rebuild of the same on-disk state.
+
 ## MCP tool
 
 `duckdb-codegraph mcp` is an MCP-over-stdio server exposing three read-only tools:

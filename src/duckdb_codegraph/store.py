@@ -14,6 +14,7 @@ HNSW persistence, so a read-only open of a frozen file needs no special flag.
 
 import logging
 from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING
 
 import duckdb
 
@@ -27,6 +28,9 @@ from duckdb_codegraph.models import (
     Node,
     Report,
 )
+
+if TYPE_CHECKING:
+    from duckdb_codegraph.indexer import IndexReport
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +128,27 @@ class CodeGraphStore:
         self._con = duckdb.connect(self.settings.db_path, read_only=self._read_only)
         if not self._read_only:
             self._ensure_schema()
+
+    def index(
+        self,
+        folder: str | Path,
+        *,
+        recursive: bool = True,
+        rebuild: bool = False,
+    ) -> "IndexReport":
+        """Index a folder of source code into this store.
+
+        Incremental-by-default: a full rebuild runs when this database is empty
+        or ``rebuild=True``; otherwise only changed, added, and deleted files
+        are reconciled by comparing stored etags against freshly computed ones,
+        and the global cross-file resolution is re-run. Delegates to
+        :func:`duckdb_codegraph.indexer.index_folder`; the import is lazy to
+        avoid the store ↔ indexer import cycle.
+        """
+        self._guard_writable()
+        from duckdb_codegraph.indexer import index_folder
+
+        return index_folder(self, folder, recursive=recursive, rebuild=rebuild)
 
     def _ensure_schema(self) -> None:
         """Create the graph tables and the read-write indexes if absent."""

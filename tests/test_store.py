@@ -237,3 +237,43 @@ def _indexed_at(db_path: str) -> CodeGraphStore:
     store = CodeGraphStore(db_path=db_path, root=str(FIXTURE))
     index_folder(store, FIXTURE)
     return store
+
+
+def test_store_index_method_delegates_full_then_incremental(tmp_path):
+    import shutil
+
+    work = tmp_path / "tree"
+    shutil.copytree(FIXTURE, work)
+    store = CodeGraphStore(db_path=str(tmp_path / "codegraph.duckdb"), root=str(work))
+
+    first = store.index(work)
+    assert first.mode == "full"
+    second = store.index(work)
+    assert second.mode == "incremental"
+    assert second.rebuilt == 0
+    store.close()
+
+
+def test_store_incremental_keeps_impact_correct_after_edit(tmp_path):
+    import shutil
+
+    work = tmp_path / "tree"
+    shutil.copytree(FIXTURE, work)
+    store = CodeGraphStore(db_path=str(tmp_path / "codegraph.duckdb"), root=str(work))
+    store.index(work)
+
+    # Edit charge.py (shifts the Base/Charge node ids); the incremental run must
+    # re-resolve so impact over Base still reaches Charge and its dependents.
+    charge = work / "payments" / "charge.py"
+    charge.write_text(
+        "# edited\n" + charge.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    report = store.index(work)
+    assert report.mode == "incremental"
+
+    result = store.impact("payments.charge.Base")
+    affected = {item.node.qualified_name for item in result.affected}
+    assert "payments.charge.Charge" in affected
+    assert "payments.premium.Premium" in affected
+    assert "payments.billing.bill" in affected
+    store.close()

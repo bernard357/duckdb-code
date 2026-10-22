@@ -26,16 +26,33 @@ def index(
     recursive: bool = typer.Option(
         True, "--recursive/--no-recursive", help="Recurse into sub-folders."
     ),
+    rebuild: bool = typer.Option(
+        False,
+        "--rebuild/--no-rebuild",
+        help="Force a full rebuild instead of the default incremental re-index.",
+    ),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
-    """Index a folder of source code into the database."""
+    """Index a folder of source code into the database.
+
+    Incremental-by-default: a full rebuild runs when the database is empty or
+    ``--rebuild`` is passed; otherwise only changed, added, and deleted files
+    are reconciled against the stored etags.
+    """
     store = CodeGraphStore(db_path=db)
     try:
-        report = index_folder(store, folder, recursive=recursive)
+        report = index_folder(store, folder, recursive=recursive, rebuild=rebuild)
     finally:
         store.close()
     if as_json:
         typer.echo(report.model_dump_json())
+    elif report.mode == "incremental":
+        typer.echo(
+            f"Incremental: {report.rebuilt} rebuilt, {report.deleted} deleted, "
+            f"{report.files} files "
+            f"({report.indexed} indexed, {report.skipped} skipped), "
+            f"{report.nodes} nodes, {report.edges} edges."
+        )
     else:
         typer.echo(
             f"Indexed {report.files} files "

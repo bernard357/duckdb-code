@@ -1,6 +1,7 @@
 """The indexer: full-build counts, determinism, stamped_at, and the seam."""
 
 import datetime
+import shutil
 from pathlib import Path
 
 from duckdb_codegraph.etag import compute_etag
@@ -13,6 +14,38 @@ FIXTURE = Path(__file__).parent / "fixtures" / "sample"
 
 def _store(tmp_path) -> CodeGraphStore:
     return CodeGraphStore(db_path=str(tmp_path / "codegraph.duckdb"))
+
+
+def _copy_fixture(tmp_path) -> Path:
+    """Copy the committed fixture into a writable working tree under tmp_path.
+
+    Edits and deletes happen on the copy so the committed fixture is never
+    mutated (AGENTS.md: fixtures hold data only, never edit them).
+    """
+    work = tmp_path / "tree"
+    shutil.copytree(FIXTURE, work)
+    return work
+
+
+def _node_ids(store: CodeGraphStore, path: str | None = None) -> set[str]:
+    if path is None:
+        rows = store._con.execute("SELECT node_id FROM nodes").fetchall()
+    else:
+        rows = store._con.execute(
+            "SELECT node_id FROM nodes WHERE path = ?", [path]
+        ).fetchall()
+    return {row[0] for row in rows}
+
+
+def _edge_set(store: CodeGraphStore) -> set[tuple[str, str, str, str, str]]:
+    rows = store._con.execute(
+        "SELECT src_id, dst_id, kind, path, resolution FROM edges"
+    ).fetchall()
+    return {tuple(row) for row in rows}
+
+
+def _table_count(store: CodeGraphStore, table: str) -> int:
+    return store._con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
 
 
 def test_index_folder_counts(tmp_path):
@@ -59,11 +92,22 @@ def test_index_folder_is_deterministic(tmp_path):
     store_b.close()
 
 
-def test_rerun_over_existing_db_yields_same_counts(tmp_path):
+def test_rerun_over_existing_db_is_incremental_noop(tmp_path):
     store = _store(tmp_path)
     first = index_folder(store, FIXTURE)
+    assert first.mode == "full"
     second = index_folder(store, FIXTURE)
-    assert first.model_dump() == second.model_dump()
+    # Incremental-by-default: the second run reconciles nothing, so it is a
+    # no-op whose whole-graph totals equal the first run's.
+    assert second.mode == "incremental"
+    assert second.rebuilt == 0
+    assert second.deleted == 0
+    assert second.files == first.files
+    assert second.indexed == first.indexed
+    assert second.skipped == first.skipped
+    assert second.nodes == first.nodes
+    assert second.edges == first.edges
+    assert second.languages == first.languages
     store.close()
 
 
@@ -131,3 +175,148 @@ def test_index_folder_rejects_non_directory(tmp_path):
         assert raised
     finally:
         store.close()
+
+
+def test_incremental_edit_rebuilds_only_changed_file(tmp_path):
+    work = _copy_fixture(tmp_path)
+    store = _store(tmp_path)
+    index_folder(store, work)
+    others_before = _node_ids(store) - _node_ids(store, "payments/billing.py")
+
+    billing = work / "payments" / "billing.py"
+    billing.write_text(
+        billing.read_text(encoding="utf-8") + "\n\ndef added():\n    return 1\n",
+        encoding="utf-8",
+    )
+    report = index_folder(store, work)
+
+    assert report.mode == "incremental"
+    assert report.rebuilt == 1
+    assert report.deleted == 0
+    # Every other file's node-id set is unchanged; only billing.py's grew.
+    others_after = _node_ids(store) - _node_ids(store, "payments/billing.py")
+    assert others_after == others_before
+    names = store._con.execute(
+        "SELECT name FROM nodes WHERE path = ? AND kind = 'function'",
+        ["payments/billing.py"],
+    ).fetchall()
+    assert ("added",) in names
+    store.close()
+
+
+def test_incremental_cross_file_edges_are_re_resolved(tmp_path):
+    work = _copy_fixture(tmp_path)
+    inc_store = _store(tmp_path)
+    index_folder(inc_store, work)
+
+    # Edit charge.py (the file the other modules bind to). Premium(Charge) and
+    # billing's `from payments.charge import Charge` bind to symbols in this
+    # file, whose node ids shift when a line is inserted above them; a correct
+    # incremental run must re-resolve those cross-file edges to the new ids.
+    charge = work / "payments" / "charge.py"
+    text = charge.read_text(encoding="utf-8")
+    charge.write_text("# edited header\n" + text, encoding="utf-8")
+    report = index_folder(inc_store, work)
+    assert report.mode == "incremental"
+    assert report.rebuilt == 1
+
+    full_store = CodeGraphStore(db_path=str(tmp_path / "full.duckdb"))
+    index_folder(full_store, work, rebuild=True)
+
+    assert _edge_set(inc_store) == _edge_set(full_store)
+    # The binding edges to the changed file are present and resolved.
+    premium_inherits = inc_store._con.execute(
+        "SELECT resolution FROM edges WHERE kind = 'inherits' "
+        "AND path = 'payments/premium.py'"
+    ).fetchall()
+    assert premium_inherits
+    inc_store.close()
+    full_store.close()
+
+
+def test_incremental_delete_drops_rows_and_dangling_edges(tmp_path):
+    work = _copy_fixture(tmp_path)
+    store = _store(tmp_path)
+    index_folder(store, work)
+
+    (work / "payments" / "premium.py").unlink()
+    report = index_folder(store, work)
+
+    assert report.mode == "incremental"
+    assert report.deleted == 1
+    # The deleted file's files/nodes rows are gone.
+    assert _node_ids(store, "payments/premium.py") == set()
+    assert (
+        store._con.execute(
+            "SELECT COUNT(*) FROM files WHERE path = ?", ["payments/premium.py"]
+        ).fetchone()[0]
+        == 0
+    )
+    # No surviving edge references a node id that no longer exists.
+    dangling = store._con.execute(
+        "SELECT COUNT(*) FROM edges e "
+        "WHERE NOT EXISTS (SELECT 1 FROM nodes n WHERE n.node_id = e.dst_id) "
+        "AND NOT EXISTS (SELECT 1 FROM nodes n WHERE n.node_id = e.src_id)"
+    ).fetchone()[0]
+    assert dangling == 0
+    assert _edge_set(store) == _edge_set_of_full_rebuild(tmp_path, work)
+    store.close()
+
+
+def _edge_set_of_full_rebuild(
+    tmp_path, work: Path
+) -> set[tuple[str, str, str, str, str]]:
+    full = CodeGraphStore(db_path=str(tmp_path / "full_cmp.duckdb"))
+    index_folder(full, work, rebuild=True)
+    edges = _edge_set(full)
+    full.close()
+    return edges
+
+
+def test_incremental_no_change_is_a_noop(tmp_path):
+    work = _copy_fixture(tmp_path)
+    store = _store(tmp_path)
+    index_folder(store, work)
+
+    counts_before = {t: _table_count(store, t) for t in ("files", "nodes", "edges")}
+    ids_before = _node_ids(store)
+
+    report = index_folder(store, work)
+
+    assert report.mode == "incremental"
+    assert report.rebuilt == 0
+    assert report.deleted == 0
+    counts_after = {t: _table_count(store, t) for t in ("files", "nodes", "edges")}
+    assert counts_after == counts_before
+    assert _node_ids(store) == ids_before
+    store.close()
+
+
+def test_full_and_incremental_reach_identical_state(tmp_path):
+    # Reach final tree state S incrementally from a prior state, and compare to
+    # a full rebuild of S: node-id and edge sets must be identical.
+    work = _copy_fixture(tmp_path)
+    inc_store = _store(tmp_path)
+    index_folder(inc_store, work)
+
+    # Mutate: edit billing, delete premium, add a new module.
+    billing = work / "payments" / "billing.py"
+    billing.write_text(
+        billing.read_text(encoding="utf-8") + "\n\ndef extra():\n    return 2\n",
+        encoding="utf-8",
+    )
+    (work / "payments" / "premium.py").unlink()
+    (work / "payments" / "refund.py").write_text(
+        "from payments.charge import Charge\n\n\n"
+        "def refund(amount):\n    return Charge().run(amount)\n",
+        encoding="utf-8",
+    )
+    index_folder(inc_store, work)
+
+    full_store = CodeGraphStore(db_path=str(tmp_path / "full.duckdb"))
+    index_folder(full_store, work, rebuild=True)
+
+    assert _node_ids(inc_store) == _node_ids(full_store)
+    assert _edge_set(inc_store) == _edge_set(full_store)
+    inc_store.close()
+    full_store.close()

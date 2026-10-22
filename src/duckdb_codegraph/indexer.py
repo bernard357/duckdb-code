@@ -38,7 +38,16 @@ _JS_TS_LANGUAGES = frozenset({"javascript", "typescript"})
 
 
 class IndexReport(BaseModel):
-    """Outcome of an :func:`index_folder` run."""
+    """Outcome of an :func:`index_folder` run.
+
+    ``files``/``indexed``/``skipped``/``nodes``/``edges``/``languages`` are
+    whole-graph totals of the FINAL database state, so a no-op incremental run
+    still reports the true graph totals (not zero). ``mode`` is ``"full"`` for a
+    full rebuild (empty DB or ``rebuild=True``) and ``"incremental"`` otherwise.
+    ``rebuilt`` counts the files re-extracted and rewritten this run (0 on a
+    no-change incremental run); ``deleted`` counts the files whose rows were
+    dropped because they vanished from disk.
+    """
 
     files: int = 0
     indexed: int = 0
@@ -46,6 +55,9 @@ class IndexReport(BaseModel):
     nodes: int = 0
     edges: int = 0
     languages: dict[str, int] = {}
+    mode: str = "full"
+    rebuilt: int = 0
+    deleted: int = 0
 
 
 def _raw_target(dst_id: str) -> str:
@@ -272,40 +284,56 @@ def index_folder(
     store: CodeGraphStore,
     folder: str | Path,
     recursive: bool = True,
+    *,
+    rebuild: bool = False,
 ) -> IndexReport:
     """Index every source file under ``folder`` into ``store``.
 
-    v1 full rebuild: the three graph tables and ``files`` are recreated empty
-    and ``meta`` cleared before the walk, so re-running over the same folder
-    yields byte-identical rows and the same :class:`IndexReport` counts.
+    Incremental-by-default: when the database already holds files and
+    ``rebuild`` is ``False``, only changed, added, and deleted files are
+    reconciled against the stored etags and the global cross-file resolution is
+    re-run (see :func:`_incremental_index`). A full rebuild runs when the
+    database is empty OR ``rebuild=True``: the three graph tables and ``files``
+    are recreated empty and ``meta`` cleared before the walk, so a full run over
+    the same folder yields byte-identical rows. The incremental path leaves the
+    database identical to a full rebuild of the same on-disk state.
     """
     folder = Path(folder)
     if not folder.is_dir():
         raise NotADirectoryError(f"Not a directory: {folder}")
 
     store._guard_writable()
-    _recreate_tables(store)
 
-    build_stamp = datetime.datetime.now(datetime.UTC)
-    paths = _iter_files(folder, recursive)
+    if rebuild or not _db_is_populated(store):
+        return _full_index(store, folder, recursive)
+    return _incremental_index(store, folder, recursive)
 
+
+def _extract_folder(
+    folder: Path, recursive: bool
+) -> tuple[list[tuple[str, str, str]], list[Node], list[Edge], dict[str, int], int]:
+    """Walk ``folder`` and extract every indexable file (no DuckDB writes).
+
+    Returns ``(file_rows, all_nodes, all_edges, languages, skipped)`` where
+    ``file_rows`` is ``(rel_path, language, etag)`` per indexed file. Shared by
+    the full-build and incremental paths so both see identical extraction.
+    """
     file_rows: list[tuple[str, str, str]] = []
     all_nodes: list[Node] = []
     all_edges: list[Edge] = []
     languages: dict[str, int] = {}
-    report = IndexReport()
+    skipped = 0
 
-    for abs_path in paths:
-        report.files += 1
+    for abs_path in _iter_files(folder, recursive):
         rel = abs_path.relative_to(folder).as_posix()
         language = detect_language(rel)
         if language is None:
-            report.skipped += 1
+            skipped += 1
             continue
         try:
             raw = abs_path.read_bytes()
         except OSError as exc:  # pragma: no cover - rare mid-walk vanish
-            report.skipped += 1
+            skipped += 1
             logger.warning("skipping unreadable file %s: %s", rel, exc)
             continue
         text = raw.decode("utf-8", errors="replace")
@@ -315,17 +343,115 @@ def index_folder(
         all_nodes.extend(extraction.nodes)
         all_edges.extend(extraction.edges)
         file_rows.append((rel, language, etag))
-        report.indexed += 1
         languages[language] = languages.get(language, 0) + 1
 
-    resolved_edges = resolve_edges(all_nodes, all_edges)
+    return file_rows, all_nodes, all_edges, languages, skipped
 
+
+def _full_index(store: CodeGraphStore, folder: Path, recursive: bool) -> IndexReport:
+    """Full rebuild: recreate the tables and rewrite the whole graph."""
+    _recreate_tables(store)
+    build_stamp = datetime.datetime.now(datetime.UTC)
+    file_rows, all_nodes, all_edges, languages, skipped = _extract_folder(
+        folder, recursive
+    )
+    resolved_edges = resolve_edges(all_nodes, all_edges)
     _write(store, file_rows, all_nodes, resolved_edges, build_stamp, folder)
 
-    report.nodes = len(all_nodes)
-    report.edges = len(resolved_edges)
-    report.languages = languages
-    return report
+    return IndexReport(
+        files=len(file_rows) + skipped,
+        indexed=len(file_rows),
+        skipped=skipped,
+        nodes=len(all_nodes),
+        edges=len(resolved_edges),
+        languages=languages,
+        mode="full",
+    )
+
+
+def _db_is_populated(store: CodeGraphStore) -> bool:
+    """Return ``True`` when the ``files`` table already holds at least one row."""
+    row = store._con.execute("SELECT COUNT(*) FROM files").fetchone()
+    return bool(row and row[0] > 0)
+
+
+def _incremental_index(
+    store: CodeGraphStore, folder: Path, recursive: bool
+) -> IndexReport:
+    """Reconcile a populated database against the current on-disk folder.
+
+    Compares each live file's freshly computed etag against its stored etag to
+    classify paths into unchanged / changed / added / deleted. When nothing
+    changed, returns a no-op report (``rebuilt=0``, ``deleted=0``) with the true
+    whole-graph totals read from the database, without re-extracting anything.
+    Otherwise it re-extracts every surviving file (the global
+    :func:`resolve_edges` pass needs the unresolved raw targets, which only live
+    in a fresh extraction), drops deleted files' rows, resolves globally, and
+    rewrites the three tables so the result is identical to a full rebuild of
+    the same on-disk state.
+    """
+    stored = _stored_etags(store)
+    file_rows, all_nodes, all_edges, languages, skipped = _extract_folder(
+        folder, recursive
+    )
+    live = {path: etag for path, _language, etag in file_rows}
+
+    live_paths = set(live)
+    stored_paths = set(stored)
+    added = live_paths - stored_paths
+    deleted = stored_paths - live_paths
+    changed = {p for p in live_paths & stored_paths if live[p] != stored[p]}
+    rebuilt = added | changed
+
+    if not rebuilt and not deleted:
+        return _noop_report(store, skipped, mode="incremental")
+
+    build_stamp = datetime.datetime.now(datetime.UTC)
+    resolved_edges = resolve_edges(all_nodes, all_edges)
+    _recreate_tables(store)
+    _write(store, file_rows, all_nodes, resolved_edges, build_stamp, folder)
+
+    return IndexReport(
+        files=len(file_rows) + skipped,
+        indexed=len(file_rows),
+        skipped=skipped,
+        nodes=len(all_nodes),
+        edges=len(resolved_edges),
+        languages=languages,
+        mode="incremental",
+        rebuilt=len(rebuilt),
+        deleted=len(deleted),
+    )
+
+
+def _stored_etags(store: CodeGraphStore) -> dict[str, str]:
+    """Return the ``{path: etag}`` map of the files currently in the database."""
+    rows = store._con.execute("SELECT path, etag FROM files").fetchall()
+    return {row[0]: row[1] for row in rows}
+
+
+def _noop_report(store: CodeGraphStore, skipped: int, *, mode: str) -> IndexReport:
+    """Build a no-change report from the whole-graph totals in the database."""
+    con = store._con
+    file_rows = con.execute("SELECT language FROM files").fetchall()
+    languages: dict[str, int] = {}
+    for (language,) in file_rows:
+        languages[language] = languages.get(language, 0) + 1
+    node_row = con.execute("SELECT COUNT(*) FROM nodes").fetchone()
+    edge_row = con.execute("SELECT COUNT(*) FROM edges").fetchone()
+    node_count = node_row[0] if node_row else 0
+    edge_count = edge_row[0] if edge_row else 0
+    return IndexReport(
+        files=len(file_rows) + skipped,
+        indexed=len(file_rows),
+        skipped=skipped,
+        nodes=node_count,
+        edges=edge_count,
+        languages=languages,
+        mode=mode,
+        rebuilt=0,
+        deleted=0,
+    )
 
 
 def _iter_files(folder: Path, recursive: bool) -> list[Path]:

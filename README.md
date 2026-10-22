@@ -38,6 +38,35 @@ report = store.report()
 `explain` returns a node's defines/fan-in/fan-out/bases/subclasses; `report`
 introspects the index.
 
+`store.index(folder)` is incremental-by-default: a full rebuild runs when the
+database is empty or you pass `rebuild=True`, and otherwise only changed, added,
+and deleted files are reconciled by comparing each file's stored `etag` against
+a freshly computed one (the `compute_etag` content fingerprint). The global
+cross-file resolution is re-run so edges that bound to a changed file are
+re-resolved; a no-change re-index is a no-op. The incremental result is
+identical to a full rebuild of the same on-disk state.
+
+```python
+from duckdb_codegraph import CodeGraphStore
+
+store = CodeGraphStore(db_path="codegraph.duckdb")
+
+store.index("./my-project")              # full build on an empty database
+store.index("./my-project")              # incremental re-index (etag-driven)
+store.index("./my-project", rebuild=True)  # force a full rebuild
+```
+
+## Indexing from the CLI
+
+```shell
+$ duckdb-codegraph index ./my-project --db codegraph.duckdb   # incremental by default
+$ duckdb-codegraph index ./my-project --db codegraph.duckdb --rebuild  # full rebuild
+```
+
+The `index` verb is incremental-by-default: it runs a full build when the
+database is empty and reconciles only changed, added, and deleted files on a
+re-run. Pass `--rebuild` to force a full rebuild.
+
 ## MCP tool
 
 `duckdb-codegraph mcp` is an MCP-over-stdio server exposing three read-only
