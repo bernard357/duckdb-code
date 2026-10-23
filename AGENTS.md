@@ -24,6 +24,8 @@ for hit in result.affected:
 
 `impact` returns the affected set with per-node distance and resolution; `explain` returns a node's structural neighbourhood; `report` introspects the index.
 
+The graph also indexes a folder of Markdown pages: every `.md` / `.markdown` file becomes a `page` node with `heading` and `tag` nodes, and `[text](other.md)` links, `[[Wikilinks]]`, and image embeds become `links_to` / `embeds` edges. The same queries then answer knowledge-graph questions — `impact` on a page is what-links-here, `explain` on a page is its inbound/outbound links plus heading structure, an empty `impact` marks an orphan page, and `report` counts pages, headings, tags, and link edges. Code and Markdown stay in separate domains (a Markdown link never binds to a code symbol and vice versa). Semantic / vector search is out of scope — for "what text is semantically near this query", use the sibling [`duckdb-vectors`](https://github.com/bernard357/duckdb-vectors) package.
+
 `store.index(folder)` (and `duckdb-graph index <folder>`) is incremental-by-default: a full rebuild runs when the database is empty or `rebuild=True` / `--rebuild` is passed, and otherwise only changed, added, and deleted files are reconciled. Change detection is etag-driven — each file's stored `etag` is compared against a freshly computed `compute_etag` fingerprint, the changed/added/deleted set is reconciled, and the global cross-file resolution is re-run so edges binding to a changed file are re-resolved. A no-change re-index is a no-op, and the incremental result is identical to a full rebuild of the same on-disk state.
 
 ## MCP tool
@@ -83,13 +85,13 @@ duckdb-graph/
 │   ├── config.py           # Settings / DUCKDB_GRAPH_* env
 │   ├── models.py           # Node / Edge / ImpactResult pydantic models
 │   ├── etag.py             # compute_etag content fingerprint
-│   └── extractors/         # pluggable extractors (python, javascript/typescript)
+│   └── extractors/         # pluggable extractors (python, javascript/typescript, markdown)
 ├── tests/                  # pytest suite
 ├── pyproject.toml          # metadata, deps, tag-driven version (hatch-vcs)
 └── Makefile                # the task toolbox
 ```
 
-Releases are tag-driven: the version comes from the git `vYYMMDD` tag, and pushing a tag publishes to PyPI.
+`.md` / `.markdown` files index into the same graph as code. Releases are tag-driven: the version comes from the git `vYYMMDD` tag, and pushing a tag publishes to PyPI.
 
 ## Pointers
 

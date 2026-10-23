@@ -23,6 +23,7 @@ shift as the code evolves; the shapes and relationships are the stable part.
 - [Impact of a change](#impact-of-a-change)
 - [Cross-module symbol context](#cross-module-symbol-context)
 - [Most-depended-upon symbols](#most-depended-upon-symbols)
+- [A knowledge graph from Markdown pages](#markdown-knowledge-graph)
 
 ## Index overview {#index-overview}
 
@@ -223,3 +224,108 @@ The most-depended-upon targets are `pydantic.BaseModel` (pulled into every
 module that declares models) and the internal `models.Node` — unsurprising for a
 package built on pydantic models over a shared node type. A ranking like this
 points a maintainer straight at the symbols whose change would ripple widest.
+
+## A knowledge graph from Markdown pages {#markdown-knowledge-graph}
+
+__What we are looking for.__ The same graph indexes a folder of Markdown pages,
+so a knowledge base of interlinked notes becomes a graph alongside code. We want
+the same questions answered for prose: what the corpus contains, what links to a
+given page, and how one page is structured and connected. These examples run
+against the committed fixture corpus at `tests/fixtures/markdown` — four
+interlinked pages (`index.md`, `guide.md`, `reference-notes.md`, and an
+`orphan.md` that nothing links to). The observed numbers are illustrative and
+shift with the corpus.
+
+__How the tool is used.__ Index the Markdown folder once, then run the same
+`report`, `impact`, and `explain` verbs:
+
+```shell
+$ duckdb-graph index tests/fixtures/markdown --db kg.duckdb
+```
+
+Every `.md` / `.markdown` file becomes a `page` node with `heading` and `tag`
+nodes; a relative `[text](other.md)` link or a `[[Wikilink]]` becomes a
+`links_to` edge, and an image embed becomes an `embeds` edge. Semantic / vector
+search is a separate concern handled by the sibling
+[`duckdb-vectors`](https://github.com/bernard357/duckdb-vectors) package — this
+graph answers structural, link-based questions only.
+
+__Observed results — corpus counts.__ `report` surfaces the page, heading, and
+tag nodes and the link edges:
+
+```shell
+$ duckdb-graph report --db kg.duckdb
+```
+
+```text
+Languages     : markdown
+  markdown: 4 files
+  node heading: 7
+  node page: 4
+  node tag: 7
+  edge defines: 7
+  edge links_to: 7
+```
+
+Four pages carry seven headings and seven tags, with seven resolved `links_to`
+edges between pages. The lone image embed points at an asset with no page
+target, so it is left dangling and dropped — hence no `embeds` key here.
+
+__Observed results — what links here.__ `impact` on a page returns the pages
+that link to it:
+
+```shell
+$ duckdb-graph impact index.md --db kg.duckdb
+```
+
+```text
+Resolved      : 8 node(s)
+Affected      : 3 node(s)
+  1  exact  page  guide.md  guide.md
+  1  exact  page  orphan.md  orphan.md
+  1  exact  page  reference-notes.md  reference-notes.md
+```
+
+Three pages link to `index.md` — `guide.md`, `orphan.md`, and
+`reference-notes.md`. By contrast, `impact orphan.md` returns zero affected
+nodes: `orphan.md` links out to the index but nothing links back to it, so it is
+an orphan page.
+
+```shell
+$ duckdb-graph impact orphan.md --db kg.duckdb
+```
+
+```text
+Resolved      : 3 node(s)
+Affected      : 0 node(s)
+```
+
+__Observed results — a page's structure and links.__ `explain` on a page returns
+its outbound links (fan-out), inbound links (fan-in), and heading structure
+(`defines`):
+
+```shell
+$ duckdb-graph explain index.md --db kg.duckdb
+```
+
+```text
+page index.md (index.md)
+  fan_in: 3  fan_out: 2
+  defines : index.md#knowledge-base
+  defines : index.md#getting-started
+  defines : index.md#getting-started-1
+  depends : guide.md
+  depends : reference-notes.md
+  used by : guide.md
+  used by : orphan.md
+  used by : reference-notes.md
+```
+
+`index.md` defines three headings (the repeated "Getting Started" heading is
+de-duplicated to a deterministic `-1` slug suffix), links out to two pages, and
+is linked from three. This is the same inbound/outbound/structure neighbourhood
+that `explain` gives a code symbol, applied to prose.
+
+Code and Markdown stay in separate domains in one database: a Markdown link
+never binds to a code symbol and a code edge never binds to a page, so indexing
+`src/duckdb_graph` into its own database is unaffected by the Markdown corpus.

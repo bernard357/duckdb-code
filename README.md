@@ -67,6 +67,39 @@ The `index` verb is incremental-by-default: it runs a full build when the
 database is empty and reconciles only changed, added, and deleted files on a
 re-run. Pass `--rebuild` to force a full rebuild.
 
+## Indexing a folder of Markdown pages
+
+The same graph indexes a folder of Markdown pages, so a knowledge base of
+interlinked notes becomes a graph alongside code. Point `index` at a Markdown
+folder:
+
+```shell
+$ duckdb-graph index ./my-notes --db graph.duckdb
+```
+
+Every `.md` / `.markdown` file becomes a `page` node with `heading` and `tag`
+nodes, and the links between pages become edges: a relative `[text](other.md)`
+link or a `[[Wikilink]]` becomes a `links_to` edge, and an image embed becomes
+an `embeds` edge. The same `impact`, `explain`, and `report` queries then answer
+knowledge-graph questions:
+
+- __what links here__ — `impact` on a page returns the pages that link to it.
+- __a page's structure and its links__ — `explain` on a page returns its inbound
+  and outbound links together with its heading structure.
+- __orphan pages__ — a page with zero inbound links (empty `impact`) is
+  unreferenced by the rest of the corpus.
+- __corpus counts__ — `report` surfaces the page, heading, and tag counts and
+  the link-edge totals.
+
+Code and Markdown stay in separate domains: a Markdown link never binds to a
+code symbol and a code edge never binds to a page, so the two corpora can share
+one database without crosstalk.
+
+Semantic / vector search is out of scope for `duckdb-graph` — it answers
+structural, link-based questions. For "what text is semantically near this
+query", use the sibling
+[`duckdb-vectors`](https://github.com/bernard357/duckdb-vectors) package.
+
 ## MCP tool
 
 `duckdb-graph mcp` is an MCP-over-stdio server exposing three read-only
@@ -136,14 +169,15 @@ duckdb-graph/
 │   ├── config.py           # Settings / DUCKDB_GRAPH_* env
 │   ├── models.py           # Node / Edge / ImpactResult pydantic models
 │   ├── etag.py             # compute_etag content fingerprint
-│   └── extractors/         # pluggable extractors (python, javascript/typescript)
+│   └── extractors/         # pluggable extractors (python, javascript/typescript, markdown)
 ├── tests/                  # pytest suite
 ├── pyproject.toml          # metadata, deps, tag-driven version (hatch-vcs)
 └── Makefile                # the task toolbox
 ```
 
-Releases are tag-driven: the version comes from the git `vYYMMDD` tag, and
-pushing a tag publishes to PyPI.
+`.md` / `.markdown` files index into the same graph as code. Releases are
+tag-driven: the version comes from the git `vYYMMDD` tag, and pushing a tag
+publishes to PyPI.
 
 ## Configuration
 
