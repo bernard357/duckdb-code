@@ -1,17 +1,21 @@
-"""Self-test: run duckdb-graph against its own source as capability evidence.
+"""Self-test: run duckdb-graph against real inputs as capability evidence.
 
-This dogfoods the tool on a real, multi-module Python codebase (the package's
-own ``src/duckdb_graph/``) and prints a sequence of labelled *requests* —
-list files, list functions, a change-impact traversal, cross-module symbol
-context, an index overview, and a most-depended-upon hotspot ranking. Each
-request prints a concise, human-readable result and asserts a structural
-expectation, so the output reads as evidence of what the graph can answer.
+This dogfoods the tool on BOTH parsers. For the code graph it indexes the
+package's own Python source (``src/duckdb_graph/``) and prints labelled
+*requests* — list files, list functions, a change-impact traversal,
+cross-module symbol context, an index overview, and a most-depended-upon
+hotspot ranking. For the Markdown knowledge graph it indexes the committed
+``tests/fixtures/markdown`` corpus and prints a knowledge-graph overview, a
+"what links here" traversal, and an orphan-page check. Each request prints a
+concise, human-readable result and asserts a structural expectation, so the
+output reads as evidence of what the graph can answer for each domain.
 
 It is deliberately a standalone script, not a pytest case: it points at live
-source rather than a hermetic fixture, so it belongs with the ``make self-test``
-dogfooding check, not the unit suite. Assertions are structural lower-bounds and
-presence checks, never exact counts, so ordinary edits to the package do not
-make it flap. The script exits non-zero on the first failed assertion.
+inputs rather than hermetic fixtures only, so it belongs with the
+``make self-test`` dogfooding check, not the unit suite. Assertions are
+structural lower-bounds and presence checks, never exact counts, so ordinary
+edits do not make it flap. The script exits non-zero on the first failed
+assertion.
 """
 
 from __future__ import annotations
@@ -25,6 +29,13 @@ from duckdb_graph.store import _DEPENDENCY_KINDS, GraphStore
 # The package source tree, resolved relative to this script (scripts/ -> repo).
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SOURCE_DIR = REPO_ROOT / "src" / "duckdb_graph"
+
+# The committed Markdown fixture corpus — four interlinked pages, one an orphan.
+MARKDOWN_DIR = REPO_ROOT / "tests" / "fixtures" / "markdown"
+
+# A page known to be linked from several others, and the orphan nothing links to.
+MARKDOWN_LINKED_PAGE = "index.md"
+MARKDOWN_ORPHAN_PAGE = "orphan.md"
 
 # Files known to be in the package source; their absence means the walk or the
 # extractor silently dropped a module.
@@ -191,6 +202,61 @@ def request_hotspots(store: GraphStore) -> str:
     return f"top {len(rows)} depended-upon symbols, max fan_in {rows[0][2]}"
 
 
+def request_markdown_overview(store: GraphStore) -> str:
+    """Knowledge-graph profile of the indexed Markdown corpus via report()."""
+    _header("markdown index overview")
+    report = store.report()
+    print(f"  languages : {', '.join(report.languages)}")
+    print(f"  nodes     : {report.nodes_by_kind}")
+    print(f"  edges     : {report.edges_by_kind}")
+    _require("markdown" in report.languages, "markdown not detected")
+    for kind in ("page", "heading", "tag"):
+        _require(
+            report.nodes_by_kind.get(kind, 0) > 0,
+            f"markdown overview: no {kind} nodes",
+        )
+    for kind in ("links_to", "tagged"):
+        _require(
+            report.edges_by_kind.get(kind, 0) > 0,
+            f"markdown overview: no {kind} edges",
+        )
+    return (
+        f"{report.nodes_by_kind.get('page', 0)} pages, "
+        f"{report.nodes_by_kind.get('heading', 0)} headings, "
+        f"{report.nodes_by_kind.get('tag', 0)} tags; "
+        f"{report.edges_by_kind.get('links_to', 0)} links, "
+        f"{report.edges_by_kind.get('tagged', 0)} tag edges"
+    )
+
+
+def request_markdown_links_here(store: GraphStore) -> str:
+    """What links here: impact on a linked page returns its linker pages."""
+    _header(f"what links to {MARKDOWN_LINKED_PAGE!r}")
+    impact = store.impact(MARKDOWN_LINKED_PAGE)
+    linkers = [n.node.name for n in impact.affected if n.node.kind == "page"]
+    for name in linkers:
+        print(f"  linked by : {name}")
+    _require(
+        len(linkers) > 0,
+        f"impact({MARKDOWN_LINKED_PAGE!r}) returned no linking pages",
+    )
+    return f"{MARKDOWN_LINKED_PAGE} is linked by {len(linkers)} page(s)"
+
+
+def request_markdown_orphan(store: GraphStore) -> str:
+    """Orphan check: the orphan page has zero inbound links."""
+    _header(f"orphan check on {MARKDOWN_ORPHAN_PAGE!r}")
+    impact = store.impact(MARKDOWN_ORPHAN_PAGE)
+    inbound = [n for n in impact.affected if n.node.kind == "page"]
+    print(f"  inbound page links: {len(inbound)}")
+    _require(
+        len(inbound) == 0,
+        f"{MARKDOWN_ORPHAN_PAGE!r} expected to be an orphan but has "
+        f"{len(inbound)} inbound page link(s)",
+    )
+    return f"{MARKDOWN_ORPHAN_PAGE} is an orphan (zero inbound links)"
+
+
 REQUESTS = (
     request_list_files,
     request_list_functions,
@@ -200,32 +266,62 @@ REQUESTS = (
     request_hotspots,
 )
 
+MARKDOWN_REQUESTS = (
+    request_markdown_overview,
+    request_markdown_links_here,
+    request_markdown_orphan,
+)
+
 
 def run_requests(store: GraphStore) -> list[str]:
-    """Index the package source, then run every request, returning summaries."""
+    """Index the package source, then run every code request, returning summaries."""
     store.index(SOURCE_DIR)
     return [request(store) for request in REQUESTS]
+
+
+def run_markdown_requests(store: GraphStore) -> list[str]:
+    """Index the Markdown corpus, then run every Markdown request."""
+    store.index(MARKDOWN_DIR)
+    return [request(store) for request in MARKDOWN_REQUESTS]
 
 
 def main() -> int:
     _require_source_exists()
     with tempfile.TemporaryDirectory() as tmp:
-        db_path = str(Path(tmp) / "self_test.duckdb")
-        store = GraphStore(db_path=db_path)
+        code_db = str(Path(tmp) / "self_test_code.duckdb")
+        store = GraphStore(db_path=code_db)
         try:
-            summaries = run_requests(store)
+            code_summaries = run_requests(store)
         finally:
             store.close()
-    print("\n--- summary ---")
-    for summary in summaries:
+        # Code and Markdown live in separate databases, mirroring the domain
+        # separation the parsers enforce in a shared DB.
+        md_db = str(Path(tmp) / "self_test_markdown.duckdb")
+        store = GraphStore(db_path=md_db)
+        try:
+            md_summaries = run_markdown_requests(store)
+        finally:
+            store.close()
+    print("\n--- summary (code graph) ---")
+    for summary in code_summaries:
         print(f"  PASS  {summary}")
-    print(f"self-test: {len(summaries)} requests passed against {SOURCE_DIR}")
+    print("\n--- summary (markdown knowledge graph) ---")
+    for summary in md_summaries:
+        print(f"  PASS  {summary}")
+    total = len(code_summaries) + len(md_summaries)
+    print(
+        f"self-test: {total} requests passed "
+        f"({len(code_summaries)} code against {SOURCE_DIR}, "
+        f"{len(md_summaries)} markdown against {MARKDOWN_DIR})"
+    )
     return 0
 
 
 def _require_source_exists() -> None:
     if not SOURCE_DIR.is_dir():
         raise CheckFailed(f"package source tree not found at {SOURCE_DIR}")
+    if not MARKDOWN_DIR.is_dir():
+        raise CheckFailed(f"markdown fixture corpus not found at {MARKDOWN_DIR}")
 
 
 if __name__ == "__main__":

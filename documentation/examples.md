@@ -1,10 +1,12 @@
 # Examples
 
-These examples show `duckdb-graph` answering real questions about a real
-codebase — the package's own `src/duckdb_graph/` source tree. Every example
-is one of the requests run by `make self-test` (see `scripts/self_test.py`), and
-the observed results below are captured verbatim from that run, so this page
-doubles as living evidence of what the graph can answer.
+These examples show `duckdb-graph` answering real questions about real inputs —
+the package's own `src/duckdb_graph/` source tree for the code graph, and the
+committed `tests/fixtures/markdown` corpus for the Markdown knowledge graph.
+Every example is one of the requests run by `make self-test` (see
+`scripts/self_test.py`), and the observed results below are captured verbatim
+from that run, so this page doubles as living evidence of what the graph can
+answer for both parsers.
 
 Each example first builds the graph once, then queries it:
 
@@ -262,14 +264,17 @@ Languages     : markdown
   markdown: 4 files
   node heading: 7
   node page: 4
-  node tag: 7
+  node tag: 5
   edge defines: 7
   edge links_to: 7
+  edge tagged: 6
 ```
 
-Four pages carry seven headings and seven tags, with seven resolved `links_to`
-edges between pages. The lone image embed points at an asset with no page
-target, so it is left dangling and dropped — hence no `embeds` key here.
+Four pages carry seven headings and five distinct tags (tags are corpus-global,
+so a tag used on several pages is one node), with seven resolved `links_to`
+edges between pages and six `tagged` edges from pages to tag nodes. The lone
+image embed points at an asset with no page target, so it is left dangling and
+dropped — hence no `embeds` key here.
 
 __Observed results — what links here.__ `impact` on a page returns the pages
 that link to it:
@@ -279,7 +284,7 @@ $ duckdb-graph impact index.md --db kg.duckdb
 ```
 
 ```text
-Resolved      : 8 node(s)
+Resolved      : 4 node(s)
 Affected      : 3 node(s)
   1  exact  page  guide.md  guide.md
   1  exact  page  orphan.md  orphan.md
@@ -296,7 +301,7 @@ $ duckdb-graph impact orphan.md --db kg.duckdb
 ```
 
 ```text
-Resolved      : 3 node(s)
+Resolved      : 2 node(s)
 Affected      : 0 node(s)
 ```
 
