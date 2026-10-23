@@ -268,11 +268,34 @@ def test_report_counts_page_heading_tag_and_link_edges(tmp_path):
     assert report.languages == ["markdown"]
     assert report.nodes_by_kind.get("page") == 4
     assert report.nodes_by_kind.get("heading", 0) > 0
-    assert report.nodes_by_kind.get("tag", 0) > 0
+    # Tags are corpus-global: one node per DISTINCT tag name across the corpus
+    # (overview, knowledge-base, architecture, guide, orphan), not one per use.
+    assert report.nodes_by_kind.get("tag") == 5
     assert report.edges_by_kind.get("links_to", 0) > 0
+    # Every `tagged` edge binds to its tag node and survives into the DB, so the
+    # kind is counted by report() (the plan's "tagged shows in report counts").
+    assert report.edges_by_kind.get("tagged", 0) > 0
     # The lone embed target (assets/diagram.png) has no page, so it is dangling
     # and dropped: no embeds edge survives.
     assert "embeds" not in report.edges_by_kind
+    store.close()
+
+
+def test_tag_nodes_are_corpus_global_and_tagged_edges_resolve(tmp_path):
+    store = _indexed_markdown(tmp_path)
+    # architecture is tagged by both index.md and reference-notes.md but is a
+    # single node with two inbound `tagged` edges, both exact.
+    rows = store._con.execute(
+        "SELECT n.path FROM nodes n WHERE n.node_id = 'tag:architecture'"
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][0] == ""  # path-independent synthetic path
+    inbound = store._con.execute(
+        "SELECT e.resolution FROM edges e WHERE e.kind = 'tagged' "
+        "AND e.dst_id = 'tag:architecture' ORDER BY e.src_id"
+    ).fetchall()
+    assert len(inbound) == 2
+    assert all(r[0] == "exact" for r in inbound)
     store.close()
 
 

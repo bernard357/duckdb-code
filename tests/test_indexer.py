@@ -187,6 +187,19 @@ def test_index_markdown_folder_counts_and_resolved_links(tmp_path):
         ).fetchall()
     }
     assert all(row[0] in page_ids for row in links)
+    # Tag nodes are de-duped corpus-wide: one row per distinct tag name even
+    # when the tag is used in several files.
+    tag_ids = store._con.execute(
+        "SELECT node_id FROM nodes WHERE kind = 'tag'"
+    ).fetchall()
+    assert len(tag_ids) == len({row[0] for row in tag_ids})
+    # tagged edges resolve to those tag nodes.
+    tag_id_set = {row[0] for row in tag_ids}
+    tagged = store._con.execute(
+        "SELECT dst_id FROM edges WHERE kind = 'tagged'"
+    ).fetchall()
+    assert tagged
+    assert all(row[0] in tag_id_set for row in tagged)
     store.close()
 
 

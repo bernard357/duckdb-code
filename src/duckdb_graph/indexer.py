@@ -39,6 +39,8 @@ _JS_TS_LANGUAGES = frozenset({"javascript", "typescript"})
 
 # The Markdown cross-page edge kinds, resolved by the Markdown link pass.
 _MARKDOWN_LINK_KINDS = ("links_to", "embeds")
+# The Markdown page->tag edge kind, resolved by the Markdown tag pass.
+_MARKDOWN_TAG_KIND = "tagged"
 # The stored-path suffixes a Markdown link target may point at a page by.
 _MARKDOWN_EXTENSIONS = (".md", ".markdown")
 
@@ -176,6 +178,48 @@ def resolve_edges(nodes: list[Node], edges: list[Edge]) -> list[Edge]:
     # consult these page maps, so domain isolation holds in both directions.
     resolved.extend(_resolve_markdown_links(nodes, edges, node_by_id))
 
+    # Markdown tag pass: bind each page->tag `tagged` edge to its corpus-global
+    # tag node by name. Strictly Markdown-domain (tag table built from `tag`
+    # nodes only, source must be a markdown node), mirroring the link pass.
+    resolved.extend(_resolve_markdown_tags(nodes, edges, node_by_id))
+
+    return resolved
+
+
+def _resolve_markdown_tags(
+    nodes: list[Node],
+    edges: list[Edge],
+    node_by_id: dict[str, Node],
+) -> list[Edge]:
+    """Bind unresolved Markdown ``tagged`` edges to their tag node by name.
+
+    Tag nodes are corpus-global (one ``tag:{name}`` node per distinct tag), so
+    the name table maps each tag name to exactly one node id: a ``tagged`` edge
+    binds ``exact`` on a single tag node and ``best_effort`` only in the
+    defensive case of several nodes sharing a name. A ``tagged`` edge whose raw
+    target names no tag node is dropped, mirroring the zero-in-set behaviour.
+    """
+    by_tag_name: dict[str, list[str]] = {}
+    for node in nodes:
+        if node.kind == "tag":
+            by_tag_name.setdefault(node.name, []).append(node.node_id)
+
+    if not by_tag_name:
+        return []
+
+    resolved: list[Edge] = []
+    for edge in edges:
+        if edge.kind != _MARKDOWN_TAG_KIND or not _is_unresolved(edge):
+            continue
+        src = node_by_id.get(edge.src_id)
+        if src is None or src.language != "markdown":
+            continue
+        hits = by_tag_name.get(_raw_target(edge.dst_id))
+        if not hits:
+            continue
+        resolution = "exact" if len(hits) == 1 else "best_effort"
+        for dst_id in hits:
+            resolved.append(_bind(edge, dst_id, resolution))
     return resolved
 
 
@@ -493,7 +537,26 @@ def _extract_folder(
         file_rows.append((rel, language, etag))
         languages[language] = languages.get(language, 0) + 1
 
-    return file_rows, all_nodes, all_edges, languages, skipped
+    return file_rows, _dedup_nodes(all_nodes), all_edges, languages, skipped
+
+
+def _dedup_nodes(nodes: list[Node]) -> list[Node]:
+    """Collapse nodes that share a ``node_id`` to the first occurrence.
+
+    Every file-anchored node carries a path+line in its id and so is already
+    unique; only the corpus-global ``tag`` node (id ``tag:{name}``, emitted once
+    per file that uses the tag) collides across files. Keeping the first
+    occurrence yields exactly one stored row per distinct tag while preserving
+    the extraction order of all other nodes.
+    """
+    seen: set[str] = set()
+    unique: list[Node] = []
+    for node in nodes:
+        if node.node_id in seen:
+            continue
+        seen.add(node.node_id)
+        unique.append(node)
+    return unique
 
 
 def _full_index(store: GraphStore, folder: Path, recursive: bool) -> IndexReport:

@@ -114,8 +114,16 @@ class _MarkdownBuilder:
         return f"{base}-{count}"
 
     def _emit_tag(self, name: str, line: int) -> None:
-        qn = f"tag:{name}"
-        tag_id = _node_id("tag", qn, self.path, line)
+        # Tag-node id EXCEPTION: a tag is corpus-global (one node per distinct
+        # tag name, not anchored to one file), so it deliberately deviates from
+        # the `{kind}:{qualified_name}@{path}:{start_line}` scheme every other
+        # node follows. The id is the path-independent `tag:{name}`, the
+        # qualified_name is the bare name, and the node carries a synthetic
+        # empty path / line 0. Identical tag names therefore collide to one
+        # node_id; the indexer de-dups those collisions across files into a
+        # single stored row (see _dedup_nodes in indexer.py).
+        qn = name
+        tag_id = f"tag:{name}"
         if tag_id not in self._tag_ids:
             self._tag_ids.add(tag_id)
             self.nodes.append(
@@ -124,9 +132,9 @@ class _MarkdownBuilder:
                     kind="tag",
                     name=name,
                     qualified_name=qn,
-                    path=self.path,
-                    start_line=line,
-                    end_line=line,
+                    path="",
+                    start_line=0,
+                    end_line=0,
                     language="markdown",
                 )
             )

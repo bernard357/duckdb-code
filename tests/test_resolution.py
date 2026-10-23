@@ -327,6 +327,53 @@ def test_markdown_embed_binds_to_a_page_and_dangling_is_dropped():
     assert embeds[0].resolution == "exact"
 
 
+def _tag(name):
+    # Mirror the real MarkdownExtractor's corpus-global tag node: a
+    # path-independent id `tag:{name}`, bare-name qualified_name, synthetic
+    # empty path / line 0.
+    return Node(
+        node_id=f"tag:{name}",
+        kind="tag",
+        name=name,
+        qualified_name=name,
+        path="",
+        start_line=0,
+        end_line=0,
+        language="markdown",
+    )
+
+
+def test_markdown_tagged_binds_to_its_tag_node_exact():
+    index = _page("index.md", "index")
+    tag = _tag("architecture")
+    nodes = [index, tag]
+    edges = [_unresolved(index.node_id, "architecture", "tagged", "index.md")]
+    resolved = resolve_edges(nodes, edges)
+    tagged = _edges_of_kind(resolved, "tagged")
+    assert len(tagged) == 1
+    assert tagged[0].dst_id == tag.node_id
+    assert tagged[0].resolution == "exact"
+
+
+def test_markdown_unknown_tag_target_is_dropped():
+    index = _page("index.md", "index")
+    nodes = [index]
+    edges = [_unresolved(index.node_id, "missing", "tagged", "index.md")]
+    resolved = resolve_edges(nodes, edges)
+    assert _edges_of_kind(resolved, "tagged") == []
+
+
+def test_markdown_tagged_never_binds_to_a_code_node():
+    # A code node whose name coincidentally equals a tag name must not capture a
+    # tagged edge (domain isolation): with no tag node present, it is dropped.
+    index = _page("index.md", "index")
+    code_fn = _node("function", "architecture", "m.py", 2, language="python")
+    nodes = [index, code_fn]
+    edges = [_unresolved(index.node_id, "architecture", "tagged", "index.md")]
+    resolved = resolve_edges(nodes, edges)
+    assert _edges_of_kind(resolved, "tagged") == []
+
+
 def test_markdown_link_never_binds_to_a_code_node():
     # A code function whose qualified_name coincidentally equals the link raw
     # target must NOT capture a markdown links_to edge (domain isolation).

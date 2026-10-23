@@ -82,6 +82,20 @@ def test_tag_node_exists_per_distinct_tag():
     assert {"overview", "knowledge-base", "architecture"} <= tag_names
 
 
+def test_tag_node_id_is_corpus_global_and_path_independent():
+    # The tag node id deliberately deviates from the file-anchored scheme: it is
+    # `tag:{name}` with a synthetic empty path, so identical tags collide to one
+    # node and the indexer de-dups them across files. `overview` appears in both
+    # the front-matter and the body yet yields exactly one node.
+    extraction = _extract("index.md")
+    tags = [n for n in extraction.nodes if n.kind == "tag"]
+    overview = [n for n in tags if n.name == "overview"]
+    assert len(overview) == 1
+    assert overview[0].node_id == "tag:overview"
+    assert overview[0].path == ""
+    assert overview[0].qualified_name == "overview"
+
+
 def test_code_span_tags_and_wikilinks_are_ignored():
     extraction = _extract("index.md")
     assert "not-a-tag" not in {n.name for n in extraction.nodes if n.kind == "tag"}
