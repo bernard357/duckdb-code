@@ -30,6 +30,8 @@ EXTENSION_LANGUAGE: dict[str, str] = {
     ".cjs": "javascript",
     ".ts": "typescript",
     ".tsx": "typescript",
+    ".md": "markdown",
+    ".markdown": "markdown",
 }
 
 
@@ -91,6 +93,13 @@ def _ts_factory() -> Extractor:
     return JsTsExtractor("typescript")
 
 
+def _markdown_factory() -> Extractor:
+    from duckdb_graph.extractors.markdown import MarkdownExtractor
+
+    return MarkdownExtractor()
+
+
 register_extractor("python", _python_factory)
 register_extractor("javascript", _js_factory)
 register_extractor("typescript", _ts_factory)
+register_extractor("markdown", _markdown_factory)

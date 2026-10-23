@@ -19,6 +19,8 @@ def test_detect_language_known_extensions():
     assert detect_language("a/b/c.cjs") == "javascript"
     assert detect_language("a/b/c.ts") == "typescript"
     assert detect_language("a/b/c.tsx") == "typescript"
+    assert detect_language("a/b/c.md") == "markdown"
+    assert detect_language("a/b/c.markdown") == "markdown"
 
 
 def test_detect_language_is_case_insensitive():
@@ -26,8 +28,14 @@ def test_detect_language_is_case_insensitive():
 
 
 def test_detect_language_unknown_returns_none():
-    assert detect_language("README.md") is None
+    # README.md now routes to the Markdown extractor.
+    assert detect_language("README.md") == "markdown"
     assert detect_language("noextension") is None
+
+
+def test_resolve_markdown_extractor():
+    extractor = resolve_extractor("markdown")
+    assert extractor.language == "markdown"
 
 
 def test_resolve_extractor_unknown_raises_listing_names():
@@ -38,6 +46,7 @@ def test_resolve_extractor_unknown_raises_listing_names():
     assert "python" in message
     assert "javascript" in message
     assert "typescript" in message
+    assert "markdown" in message
 
 
 def test_register_extension_normalizes(monkeypatch):

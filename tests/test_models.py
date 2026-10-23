@@ -30,9 +30,36 @@ def _node(**overrides) -> Node:
 
 
 def test_kind_constants():
-    assert NODE_KINDS == ("file", "module", "class", "function", "import")
-    assert EDGE_KINDS == ("defines", "imports", "calls", "inherits", "references")
+    assert NODE_KINDS == (
+        "file",
+        "module",
+        "class",
+        "function",
+        "import",
+        "page",
+        "heading",
+        "tag",
+    )
+    assert EDGE_KINDS == (
+        "defines",
+        "imports",
+        "calls",
+        "inherits",
+        "references",
+        "links_to",
+        "embeds",
+        "tagged",
+    )
     assert RESOLUTIONS == ("exact", "best_effort")
+
+
+def test_markdown_kinds_present():
+    assert "page" in NODE_KINDS
+    assert "heading" in NODE_KINDS
+    assert "tag" in NODE_KINDS
+    assert "links_to" in EDGE_KINDS
+    assert "embeds" in EDGE_KINDS
+    assert "tagged" in EDGE_KINDS
 
 
 def test_node_fields():
