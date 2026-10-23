@@ -10,6 +10,7 @@ from duckdb_graph.indexer import _rebuild_file, index_folder
 from duckdb_graph.store import GraphStore
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample"
+MARKDOWN_FIXTURE = Path(__file__).parent / "fixtures" / "markdown"
 
 
 def _store(tmp_path) -> GraphStore:
@@ -161,6 +162,43 @@ def test_rebuild_file_rebuilds_one_file_leaving_others_untouched(tmp_path):
     ).fetchone()
     assert billing_rows[0] == len(extraction.nodes)
     store.close()
+
+
+def test_index_markdown_folder_counts_and_resolved_links(tmp_path):
+    store = _store(tmp_path)
+    report = index_folder(store, MARKDOWN_FIXTURE)
+
+    assert report.languages.get("markdown", 0) == 4
+    kinds = dict(
+        store._con.execute("SELECT kind, COUNT(*) FROM nodes GROUP BY kind").fetchall()
+    )
+    assert kinds.get("page", 0) > 0
+    assert kinds.get("heading", 0) > 0
+    assert kinds.get("tag", 0) > 0
+    # links_to edges resolved into the edges table, pointing at real page ids.
+    links = store._con.execute(
+        "SELECT dst_id FROM edges WHERE kind = 'links_to'"
+    ).fetchall()
+    assert links
+    page_ids = {
+        row[0]
+        for row in store._con.execute(
+            "SELECT node_id FROM nodes WHERE kind = 'page'"
+        ).fetchall()
+    }
+    assert all(row[0] in page_ids for row in links)
+    store.close()
+
+
+def test_index_markdown_is_deterministic(tmp_path):
+    store_a = GraphStore(db_path=str(tmp_path / "ma.duckdb"))
+    store_b = GraphStore(db_path=str(tmp_path / "mb.duckdb"))
+    index_folder(store_a, MARKDOWN_FIXTURE)
+    index_folder(store_b, MARKDOWN_FIXTURE)
+    assert _node_ids(store_a) == _node_ids(store_b)
+    assert _edge_set(store_a) == _edge_set(store_b)
+    store_a.close()
+    store_b.close()
 
 
 def test_index_folder_rejects_non_directory(tmp_path):

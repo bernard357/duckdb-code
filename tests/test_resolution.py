@@ -214,3 +214,156 @@ def test_js_specifier_bare_never_resolves():
     modules = {"web/charge": "module:web/charge@web/charge.ts:1"}
     assert _resolve_js_specifier("react", "web/billing.ts", modules) is None
     assert _resolve_js_specifier("lodash/map", "web/billing.ts", modules) is None
+
+
+def _page(path, stem):
+    # Mirror the real MarkdownExtractor: a page node's qualified_name is the
+    # stored POSIX path and its `name` is the file STEM (no extension), the
+    # field the indexer derives the title/slug from.
+    return Node(
+        node_id=f"page:{path}@{path}:1",
+        kind="page",
+        name=stem,
+        qualified_name=path,
+        path=path,
+        start_line=1,
+        end_line=1,
+        language="markdown",
+    )
+
+
+def test_markdown_relative_path_links_to_binds_exact():
+    # index.md links to guide.md by relative path; the edge binds to the guide
+    # page node, resolution exact.
+    index = _page("index.md", "index")
+    guide = _page("guide.md", "guide")
+    nodes = [index, guide]
+    edges = [_unresolved(index.node_id, "guide.md", "links_to", "index.md")]
+
+    resolved = resolve_edges(nodes, edges)
+    links = _edges_of_kind(resolved, "links_to")
+    assert len(links) == 1
+    assert links[0].dst_id == guide.node_id
+    assert links[0].resolution == "exact"
+
+
+def test_markdown_relative_path_normalizes_dotdot():
+    # docs/guide.md links to ../index.md -> index.md at the tree root.
+    index = _page("index.md", "index")
+    guide = _page("docs/guide.md", "guide")
+    nodes = [index, guide]
+    edges = [_unresolved(guide.node_id, "../index.md", "links_to", "docs/guide.md")]
+
+    resolved = resolve_edges(nodes, edges)
+    links = _edges_of_kind(resolved, "links_to")
+    assert len(links) == 1
+    assert links[0].dst_id == index.node_id
+    assert links[0].resolution == "exact"
+
+
+def test_markdown_wikilink_title_binds_by_slug_exact_on_single_page():
+    # A wikilink [[Guide]] (raw target "Guide") binds to the page whose stem
+    # slug matches, exact on a single page.
+    index = _page("index.md", "index")
+    guide = _page("guide.md", "guide")
+    nodes = [index, guide]
+    edges = [_unresolved(index.node_id, "Guide", "links_to", "index.md")]
+
+    resolved = resolve_edges(nodes, edges)
+    links = _edges_of_kind(resolved, "links_to")
+    assert len(links) == 1
+    assert links[0].dst_id == guide.node_id
+    assert links[0].resolution == "exact"
+
+
+def test_markdown_wikilink_best_effort_when_two_pages_share_a_title():
+    # Two pages in different folders share the stem "guide"; a wikilink binds to
+    # both, best_effort.
+    index = _page("index.md", "index")
+    guide_a = _page("a/guide.md", "guide")
+    guide_b = _page("b/guide.md", "guide")
+    nodes = [index, guide_a, guide_b]
+    edges = [_unresolved(index.node_id, "Guide", "links_to", "index.md")]
+
+    resolved = resolve_edges(nodes, edges)
+    links = _edges_of_kind(resolved, "links_to")
+    assert len(links) == 2
+    assert {e.dst_id for e in links} == {guide_a.node_id, guide_b.node_id}
+    assert all(e.resolution == "best_effort" for e in links)
+
+
+def test_markdown_external_url_target_is_dropped():
+    index = _page("index.md", "index")
+    nodes = [index]
+    edges = [
+        _unresolved(index.node_id, "https://example.com", "links_to", "index.md"),
+        _unresolved(index.node_id, "mailto:a@b.co", "links_to", "index.md"),
+        _unresolved(index.node_id, "#same-page", "links_to", "index.md"),
+    ]
+    resolved = resolve_edges(nodes, edges)
+    assert _edges_of_kind(resolved, "links_to") == []
+
+
+def test_markdown_missing_page_path_target_is_dropped():
+    index = _page("index.md", "index")
+    nodes = [index]
+    edges = [_unresolved(index.node_id, "missing.md", "links_to", "index.md")]
+    resolved = resolve_edges(nodes, edges)
+    assert _edges_of_kind(resolved, "links_to") == []
+
+
+def test_markdown_embed_binds_to_a_page_and_dangling_is_dropped():
+    index = _page("index.md", "index")
+    other = _page("other.md", "other")
+    nodes = [index, other]
+    edges = [
+        _unresolved(index.node_id, "other.md", "embeds", "index.md"),
+        _unresolved(index.node_id, "assets/arch.png", "embeds", "index.md"),
+    ]
+    resolved = resolve_edges(nodes, edges)
+    embeds = _edges_of_kind(resolved, "embeds")
+    assert len(embeds) == 1
+    assert embeds[0].dst_id == other.node_id
+    assert embeds[0].resolution == "exact"
+
+
+def test_markdown_link_never_binds_to_a_code_node():
+    # A code function whose qualified_name coincidentally equals the link raw
+    # target must NOT capture a markdown links_to edge (domain isolation).
+    index = _page("guide.md", "guide")
+    code_mod = _node("module", "guide", "guide.py", language="python")
+    code_fn = _node("function", "guide.md", "guide.py", 2, language="python")
+    nodes = [index, code_mod, code_fn]
+    # No page named "guide.md" other than the source itself; the raw target
+    # "guide.md" is a path that matches no OTHER page, so the edge is dropped —
+    # it must never bind to code_fn even though its qualified_name is "guide.md".
+    edges = [_unresolved(index.node_id, "guide.md", "links_to", "guide.md")]
+
+    resolved = resolve_edges(nodes, edges)
+    links = _edges_of_kind(resolved, "links_to")
+    # Binds to the page itself (same stored path) — a page node, never the code
+    # function — and in this corpus the only page at guide.md is the source.
+    assert all(node_kind_of(nodes, e.dst_id) == "page" for e in links)
+    assert code_fn.node_id not in {e.dst_id for e in links}
+
+
+def test_code_edge_never_binds_to_a_page_node():
+    # A python call whose bare name equals a page stem must resolve only through
+    # the code symbol tables, never to the page node.
+    page = _page("helper.md", "helper")
+    mod = _node("module", "m", "m.py", language="python")
+    caller = _node("function", "m.caller", "m.py", 2, language="python")
+    nodes = [page, mod, caller]
+    edges = [_unresolved(caller.node_id, "helper", "calls", "m.py")]
+    resolved = resolve_edges(nodes, edges)
+    calls = _edges_of_kind(resolved, "calls")
+    # No code "helper" exists, so the call is dropped — never captured by the
+    # page node whose stem is "helper".
+    assert calls == []
+
+
+def node_kind_of(nodes, node_id):
+    for n in nodes:
+        if n.node_id == node_id:
+            return n.kind
+    return None

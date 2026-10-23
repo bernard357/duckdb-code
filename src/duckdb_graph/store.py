@@ -38,7 +38,14 @@ logger = logging.getLogger(__name__)
 # traverse. ``defines`` is deliberately absent: it is a container-structure
 # edge, read forward once by ``explain`` and walked in reverse only to seed a
 # symbol's container chain in ``impact`` — never a dependency hop.
-_DEPENDENCY_KINDS = ("imports", "calls", "inherits", "references")
+_DEPENDENCY_KINDS = (
+    "imports",
+    "calls",
+    "inherits",
+    "references",
+    "links_to",
+    "embeds",
+)
 
 # A target string is classified as a path (not a symbol) when it carries one of
 # these registered source extensions. Kept in sync with the extractor registry

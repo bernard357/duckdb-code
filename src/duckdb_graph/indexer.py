@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from duckdb_graph.etag import compute_etag
 from duckdb_graph.extractors.base import Extraction
+from duckdb_graph.extractors.markdown import _slug
 from duckdb_graph.extractors.python import UNRESOLVED
 from duckdb_graph.extractors.registry import detect_language, resolve_extractor
 from duckdb_graph.models import Edge, Node
@@ -35,6 +36,11 @@ _SCOPED_KINDS = ("inherits", "calls", "references")
 # The fixed extension order the JS/TS specifier resolver tries (NFR 2).
 _JS_TS_EXTENSIONS = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
 _JS_TS_LANGUAGES = frozenset({"javascript", "typescript"})
+
+# The Markdown cross-page edge kinds, resolved by the Markdown link pass.
+_MARKDOWN_LINK_KINDS = ("links_to", "embeds")
+# The stored-path suffixes a Markdown link target may point at a page by.
+_MARKDOWN_EXTENSIONS = (".md", ".markdown")
 
 
 class IndexReport(BaseModel):
@@ -164,7 +170,149 @@ def resolve_edges(nodes: list[Node], edges: list[Edge]) -> list[Edge]:
         ):
             resolved.append(_bind(edge, dst_id, resolution))
 
+    # Markdown link pass: bind links_to/embeds within the Markdown domain only.
+    # It consults page-only symbol tables and never the code tables above, so a
+    # page link never binds to a code node; conversely the code passes never
+    # consult these page maps, so domain isolation holds in both directions.
+    resolved.extend(_resolve_markdown_links(nodes, edges, node_by_id))
+
     return resolved
+
+
+def _resolve_markdown_links(
+    nodes: list[Node],
+    edges: list[Edge],
+    node_by_id: dict[str, Node],
+) -> list[Edge]:
+    """Bind unresolved Markdown ``links_to``/``embeds`` edges to page nodes.
+
+    Builds three page-only symbol tables — by stored path, by page title, and by
+    slug of the title/stem — from ``page`` nodes, then binds each unresolved
+    link/embed edge whose SOURCE is a ``markdown`` node:
+
+    - A relative-path target (contains ``/``, ends in ``.md``/``.markdown``, or
+      matches a page after appending those extensions) is normalized against the
+      source page's directory (``.``/``..`` resolved POSIX-style, mirroring
+      :func:`_resolve_js_specifier`) and matched by stored path -> ``exact``.
+    - Otherwise the target is treated as a wikilink title/slug and matched by
+      title then by slug -> ``exact`` on a single page, ``best_effort`` on
+      several.
+    - A pure same-page ``#fragment`` target or an external target (``http(s)``,
+      ``mailto:``, a missing file) matches no page and is left DANGLING: the
+      edge is dropped, never raised, mirroring the zero-in-set code behaviour.
+    """
+    by_page_path: dict[str, str] = {}
+    by_page_title: dict[str, list[str]] = {}
+    by_page_slug: dict[str, list[str]] = {}
+    for node in nodes:
+        if node.kind != "page":
+            continue
+        by_page_path[node.path] = node.node_id
+        # The page title is reconstructable from stored fields: the page `name`
+        # carries the file stem (FEAT-001). A wikilink may name a page by its
+        # human title (stem rendered) or by its slug, so key both.
+        title = node.name
+        by_page_title.setdefault(title, []).append(node.node_id)
+        by_page_slug.setdefault(_slug(title), []).append(node.node_id)
+
+    if not by_page_path:
+        return []
+
+    resolved: list[Edge] = []
+    for edge in edges:
+        if edge.kind not in _MARKDOWN_LINK_KINDS or not _is_unresolved(edge):
+            continue
+        src = node_by_id.get(edge.src_id)
+        if src is None or src.language != "markdown":
+            continue
+        raw = _raw_target(edge.dst_id)
+        binding = _resolve_markdown_target(
+            raw, src.path, by_page_path, by_page_title, by_page_slug
+        )
+        for dst_id, resolution in binding:
+            resolved.append(_bind(edge, dst_id, resolution))
+    return resolved
+
+
+def _resolve_markdown_target(
+    raw: str,
+    src_path: str,
+    by_page_path: dict[str, str],
+    by_page_title: dict[str, list[str]],
+    by_page_slug: dict[str, list[str]],
+) -> list[tuple[str, str]]:
+    """Resolve one Markdown link target to ``(page_node_id, resolution)`` pairs.
+
+    Returns an empty list for a dangling target (external URL, pure fragment,
+    missing page), so the caller drops the edge.
+    """
+    target = raw.strip()
+    # Drop a pure same-page fragment (``#anchor``) and any scheme URL / mailto.
+    if not target or target.startswith("#"):
+        return []
+    if "://" in target or target.startswith("mailto:"):
+        return []
+    # Strip a trailing ``#fragment`` so a link to another page's anchor still
+    # binds to that page.
+    path_part = target.split("#", 1)[0]
+
+    looks_like_path = (
+        "/" in path_part
+        or PurePosixPath(path_part).suffix.lower() in _MARKDOWN_EXTENSIONS
+    )
+    if looks_like_path or path_part:
+        hit = _match_page_path(path_part, src_path, by_page_path)
+        if hit is not None:
+            return [(hit, "exact")]
+        if looks_like_path:
+            # A path-shaped target that matches no page is dangling.
+            return []
+
+    # Treat the raw target as a wikilink title/slug.
+    title_hits = by_page_title.get(path_part)
+    if title_hits:
+        return _title_bindings(title_hits)
+    slug_hits = by_page_slug.get(_slug(path_part))
+    if slug_hits:
+        return _title_bindings(slug_hits)
+    return []
+
+
+def _title_bindings(hits: list[str]) -> list[tuple[str, str]]:
+    resolution = "exact" if len(hits) == 1 else "best_effort"
+    return [(nid, resolution) for nid in hits]
+
+
+def _match_page_path(
+    path_part: str, src_path: str, by_page_path: dict[str, str]
+) -> str | None:
+    """Normalize a relative path target and match it against the page paths.
+
+    Resolves ``.``/``..`` against the source page's directory (POSIX join, same
+    normalization as :func:`_resolve_js_specifier`) and tries the normalized
+    path as-is and with ``.md``/``.markdown`` appended.
+    """
+    base_dir = PurePosixPath(src_path).parent
+    joined = base_dir / path_part
+    parts: list[str] = []
+    for part in joined.parts:
+        if part == ".":
+            continue
+        if part == "..":
+            if parts:
+                parts.pop()
+            continue
+        parts.append(part)
+    norm = "/".join(parts)
+
+    candidates = [norm]
+    if PurePosixPath(norm).suffix.lower() not in _MARKDOWN_EXTENSIONS:
+        candidates.extend(f"{norm}{ext}" for ext in _MARKDOWN_EXTENSIONS)
+    for candidate in candidates:
+        hit = by_page_path.get(candidate)
+        if hit is not None:
+            return hit
+    return None
 
 
 def _bind(edge: Edge, dst_id: str, resolution: str) -> Edge:

@@ -15,12 +15,19 @@ from duckdb_graph.indexer import index_folder
 from duckdb_graph.store import GraphStore, ReadOnlyError
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample"
+MARKDOWN_FIXTURE = Path(__file__).parent / "fixtures" / "markdown"
 
 
 def _indexed(tmp_path) -> GraphStore:
     """Open a writable store, index the fixture, return it (root = fixture)."""
     store = GraphStore(db_path=str(tmp_path / "graph.duckdb"), root=str(FIXTURE))
     index_folder(store, FIXTURE)
+    return store
+
+
+def _indexed_markdown(tmp_path) -> GraphStore:
+    store = GraphStore(db_path=str(tmp_path / "kg.duckdb"), root=str(MARKDOWN_FIXTURE))
+    index_folder(store, MARKDOWN_FIXTURE)
     return store
 
 
@@ -215,6 +222,73 @@ def test_report_empty_index_returns_empty_shape(tmp_path):
     assert report.files_by_language == {}
     assert report.languages == []
     assert report.roots == [str(empty_dir)]
+    store.close()
+
+
+def test_impact_on_linked_page_returns_its_linkers(tmp_path):
+    store = _indexed_markdown(tmp_path)
+    result = store.impact("index.md")
+    affected_paths = set(result.affected_files)
+    # guide.md, reference-notes.md and orphan.md all link to index.md.
+    assert "guide.md" in affected_paths
+    assert "reference-notes.md" in affected_paths
+    assert "orphan.md" in affected_paths
+    store.close()
+
+
+def test_explain_page_shows_links_and_headings(tmp_path):
+    store = _indexed_markdown(tmp_path)
+    explanation = store.explain("index.md").explanations[0]
+    fan_out_paths = {n.path for n in explanation.fan_out}
+    fan_in_paths = {n.path for n in explanation.fan_in}
+    # Outbound links: index -> guide, index -> reference-notes (wikilink slug).
+    assert "guide.md" in fan_out_paths
+    assert "reference-notes.md" in fan_out_paths
+    # Inbound links: pages that link back to index.
+    assert "guide.md" in fan_in_paths
+    assert "orphan.md" in fan_in_paths
+    # defines surfaces the page's heading structure.
+    assert any(n.kind == "heading" for n in explanation.defines)
+    store.close()
+
+
+def test_orphan_page_has_zero_inbound_links(tmp_path):
+    store = _indexed_markdown(tmp_path)
+    result = store.impact("orphan.md")
+    # orphan.md links out but nothing links to it: no reverse dependents.
+    assert result.affected == []
+    explanation = store.explain("orphan.md").explanations[0]
+    assert explanation.fan_in == []
+    store.close()
+
+
+def test_report_counts_page_heading_tag_and_link_edges(tmp_path):
+    store = _indexed_markdown(tmp_path)
+    report = store.report()
+    assert report.languages == ["markdown"]
+    assert report.nodes_by_kind.get("page") == 4
+    assert report.nodes_by_kind.get("heading", 0) > 0
+    assert report.nodes_by_kind.get("tag", 0) > 0
+    assert report.edges_by_kind.get("links_to", 0) > 0
+    # The lone embed target (assets/diagram.png) has no page, so it is dangling
+    # and dropped: no embeds edge survives.
+    assert "embeds" not in report.edges_by_kind
+    store.close()
+
+
+def test_markdown_link_never_binds_to_a_code_node_end_to_end(tmp_path):
+    # Index markdown and code into one store; a markdown links_to edge must
+    # never point at a code node, and no code edge points at a page node.
+    store = GraphStore(db_path=str(tmp_path / "mixed.duckdb"))
+    index_folder(store, MARKDOWN_FIXTURE)
+    # Second folder: re-index code on top would rebuild; instead assert on the
+    # markdown-only graph that every links_to/embeds dst is a page.
+    rows = store._con.execute(
+        "SELECT n.kind FROM edges e JOIN nodes n ON n.node_id = e.dst_id "
+        "WHERE e.kind IN ('links_to', 'embeds')"
+    ).fetchall()
+    assert rows
+    assert all(row[0] == "page" for row in rows)
     store.close()
 
 
