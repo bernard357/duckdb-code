@@ -1,23 +1,23 @@
-"""duckdb-codegraph: an embeddable code-graph building block.
+"""duckdb-graph: an embeddable code-graph building block.
 
 Exposes a simplified interface over a local DuckDB database holding a
 tree-sitter-extracted code graph, with reverse-dependency impact analysis and
 structure explanation. One DuckDB file is one index.
 """
 
-from duckdb_codegraph.config import Settings
-from duckdb_codegraph.etag import compute_etag
-from duckdb_codegraph.extractors.base import Extraction, Extractor
-from duckdb_codegraph.extractors.javascript import JsTsExtractor
-from duckdb_codegraph.extractors.python import PythonExtractor
-from duckdb_codegraph.extractors.registry import (
+from duckdb_graph.config import Settings
+from duckdb_graph.etag import compute_etag
+from duckdb_graph.extractors.base import Extraction, Extractor
+from duckdb_graph.extractors.javascript import JsTsExtractor
+from duckdb_graph.extractors.python import PythonExtractor
+from duckdb_graph.extractors.registry import (
     detect_language,
     register_extractor,
     resolve_extractor,
 )
-from duckdb_codegraph.indexer import IndexReport, index_folder
-from duckdb_codegraph.mcp_server import build_server
-from duckdb_codegraph.models import (
+from duckdb_graph.indexer import IndexReport, index_folder
+from duckdb_graph.mcp_server import build_server
+from duckdb_graph.models import (
     Edge,
     Explanation,
     ExplanationResult,
@@ -26,10 +26,10 @@ from duckdb_codegraph.models import (
     Node,
     Report,
 )
-from duckdb_codegraph.store import CodeGraphStore, ReadOnlyError
+from duckdb_graph.store import GraphStore, ReadOnlyError
 
 __all__ = [
-    "CodeGraphStore",
+    "GraphStore",
     "Edge",
     "Explanation",
     "ExplanationResult",

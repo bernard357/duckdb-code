@@ -13,10 +13,10 @@ from pathlib import Path
 import pytest
 from starlette.applications import Starlette
 
-from duckdb_codegraph.config import Settings
-from duckdb_codegraph.indexer import index_folder
-from duckdb_codegraph.mcp_server import build_server
-from duckdb_codegraph.store import CodeGraphStore
+from duckdb_graph.config import Settings
+from duckdb_graph.indexer import index_folder
+from duckdb_graph.mcp_server import build_server
+from duckdb_graph.store import GraphStore
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample"
 
@@ -24,7 +24,7 @@ FIXTURE = Path(__file__).parent / "fixtures" / "sample"
 @pytest.fixture
 def indexed_db(tmp_path):
     db = str(tmp_path / "mcp.duckdb")
-    writer = CodeGraphStore(db_path=db, root=str(FIXTURE))
+    writer = GraphStore(db_path=db, root=str(FIXTURE))
     index_folder(writer, FIXTURE)
     writer.close()
     return db

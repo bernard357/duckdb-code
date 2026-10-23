@@ -3,9 +3,9 @@
 This module owns the authoritative schema DDL (:data:`SCHEMA_DDL` and
 :data:`INDEX_DDL`) so the indexer's table recreation and the store's
 ``_ensure_schema`` can never drift. It also exposes the three read-only agentic
-tools over the graph: :meth:`CodeGraphStore.impact` (transitive reverse
-dependencies), :meth:`CodeGraphStore.explain` (one node's structural
-neighbourhood), and :meth:`CodeGraphStore.report` (pure aggregation).
+tools over the graph: :meth:`GraphStore.impact` (transitive reverse
+dependencies), :meth:`GraphStore.explain` (one node's structural
+neighbourhood), and :meth:`GraphStore.report` (pure aggregation).
 
 The only DuckDB indexes are ordinary B-tree indexes on text/int columns plus
 the two primary keys (``files.path``, ``meta.key``); there is no experimental
@@ -18,9 +18,9 @@ from typing import TYPE_CHECKING
 
 import duckdb
 
-from duckdb_codegraph.config import Settings
-from duckdb_codegraph.extractors.registry import EXTENSION_LANGUAGE
-from duckdb_codegraph.models import (
+from duckdb_graph.config import Settings
+from duckdb_graph.extractors.registry import EXTENSION_LANGUAGE
+from duckdb_graph.models import (
     Explanation,
     ExplanationResult,
     ImpactNode,
@@ -30,7 +30,7 @@ from duckdb_codegraph.models import (
 )
 
 if TYPE_CHECKING:
-    from duckdb_codegraph.indexer import IndexReport
+    from duckdb_graph.indexer import IndexReport
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +106,7 @@ class ReadOnlyError(RuntimeError):
     """Raised when a write is attempted on a read-only store."""
 
 
-class CodeGraphStore:
+class GraphStore:
     """A DuckDB-backed code graph.
 
     ``read_only`` opens the file without allowing writes — the mode used when a
@@ -142,11 +142,11 @@ class CodeGraphStore:
         or ``rebuild=True``; otherwise only changed, added, and deleted files
         are reconciled by comparing stored etags against freshly computed ones,
         and the global cross-file resolution is re-run. Delegates to
-        :func:`duckdb_codegraph.indexer.index_folder`; the import is lazy to
+        :func:`duckdb_graph.indexer.index_folder`; the import is lazy to
         avoid the store ↔ indexer import cycle.
         """
         self._guard_writable()
-        from duckdb_codegraph.indexer import index_folder
+        from duckdb_graph.indexer import index_folder
 
         return index_folder(self, folder, recursive=recursive, rebuild=rebuild)
 
@@ -167,7 +167,7 @@ class CodeGraphStore:
         """Close the underlying connection."""
         self._con.close()
 
-    def __enter__(self) -> "CodeGraphStore":
+    def __enter__(self) -> "GraphStore":
         return self
 
     def __exit__(self, *exc) -> None:

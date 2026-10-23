@@ -3,15 +3,16 @@ requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
-name = "duckdb-codegraph"
+name = "duckdb-graph"
 dynamic = ["version"]
-description = "Frugal, embeddable code-graph building block for agentic systems — tree-sitter impact analysis and structure explanation over a local DuckDB file, no external service."
+description = "Frugal, embeddable graph building block for agentic systems — tree-sitter code impact analysis and structure explanation over a local DuckDB file, no external service."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [{ name = "Bernard Paques", email = "bernard.paques@gmail.com" }]
 keywords = [
     "duckdb",
+    "graph",
     "code-graph",
     "tree-sitter",
     "impact-analysis",
@@ -46,14 +47,14 @@ dependencies = [
 dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11"]
 
 [project.scripts]
-duckdb-codegraph = "duckdb_codegraph.cli:app"
+duckdb-graph = "duckdb_graph.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/bernard357/duckdb-codegraph"
-Repository = "https://github.com/bernard357/duckdb-codegraph"
-Documentation = "https://bernard357.github.io/duckdb-codegraph/"
-Issues = "https://github.com/bernard357/duckdb-codegraph/issues"
-Changelog = "https://github.com/bernard357/duckdb-codegraph/blob/main/CHANGES.md"
+Homepage = "https://github.com/bernard357/duckdb-graph"
+Repository = "https://github.com/bernard357/duckdb-graph"
+Documentation = "https://bernard357.github.io/duckdb-graph/"
+Issues = "https://github.com/bernard357/duckdb-graph/issues"
+Changelog = "https://github.com/bernard357/duckdb-graph/blob/main/CHANGES.md"
 
 # Version is derived from the latest git tag (e.g. a v0.1.0 tag yields 0.1.0).
 # Between tags, hatch-vcs appends a dev/commit suffix. There is no version
@@ -62,7 +63,7 @@ Changelog = "https://github.com/bernard357/duckdb-codegraph/blob/main/CHANGES.md
 source = "vcs"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/duckdb_codegraph"]
+packages = ["src/duckdb_graph"]
 
 [tool.ruff]
 line-length = 88
@@ -77,7 +78,7 @@ markers = ["slow: tests that take more than 200ms"]
 
 [tool.mypy]
 python_version = "3.12"
-files = ["src/duckdb_codegraph", "scripts"]
+files = ["src/duckdb_graph", "scripts"]
 warn_unused_ignores = true
 
 # Core parsing and server dependencies ship no type stubs; their imports are

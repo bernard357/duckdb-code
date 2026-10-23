@@ -1,6 +1,6 @@
 """ETag byte-identity: same content same etag, changed content different etag."""
 
-from duckdb_codegraph.etag import compute_etag
+from duckdb_graph.etag import compute_etag
 
 
 def test_etag_is_deterministic():

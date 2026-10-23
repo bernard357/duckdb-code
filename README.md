@@ -1,8 +1,8 @@
-# duckdb-codegraph
+# duckdb-graph
 
 __A frugal, embeddable code-graph building block for agentic systems — tree-sitter impact analysis and structure explanation over a local DuckDB file, no external service.__
 
-`duckdb-codegraph` is a python package that exposes the actual structure of a
+`duckdb-graph` is a python package that exposes the actual structure of a
 codebase to a local agent, in 3 steps:
 
 1. analyze a folder of source files with tree-sitter and extract nodes and edges
@@ -10,7 +10,7 @@ codebase to a local agent, in 3 steps:
 3. answer `impact`, `explain`, and `report` questions with a local function call
 
 Where [`duckdb-vectors`](https://github.com/bernard357/duckdb-vectors) answers
-"what text is semantically near this query", `duckdb-codegraph` answers "what
+"what text is semantically near this query", `duckdb-graph` answers "what
 code is affected if this symbol or file changes" and "what is the structure of
 this code". The must-be-reliable deliverable is `impact`: a transitive
 reverse-dependency set over the edge graph, with every best-effort edge flagged
@@ -22,9 +22,9 @@ Open a store against a local `.duckdb` file and query it. Open read-only in the
 serving path, when the index is a frozen artifact baked into the container:
 
 ```python
-from duckdb_codegraph import CodeGraphStore
+from duckdb_graph import GraphStore
 
-store = CodeGraphStore(db_path="codegraph.duckdb", read_only=True)
+store = GraphStore(db_path="graph.duckdb", read_only=True)
 
 result = store.impact("payments.charge.Charge")
 for hit in result.affected:
@@ -47,9 +47,9 @@ re-resolved; a no-change re-index is a no-op. The incremental result is
 identical to a full rebuild of the same on-disk state.
 
 ```python
-from duckdb_codegraph import CodeGraphStore
+from duckdb_graph import GraphStore
 
-store = CodeGraphStore(db_path="codegraph.duckdb")
+store = GraphStore(db_path="graph.duckdb")
 
 store.index("./my-project")              # full build on an empty database
 store.index("./my-project")              # incremental re-index (etag-driven)
@@ -59,8 +59,8 @@ store.index("./my-project", rebuild=True)  # force a full rebuild
 ## Indexing from the CLI
 
 ```shell
-$ duckdb-codegraph index ./my-project --db codegraph.duckdb   # incremental by default
-$ duckdb-codegraph index ./my-project --db codegraph.duckdb --rebuild  # full rebuild
+$ duckdb-graph index ./my-project --db graph.duckdb   # incremental by default
+$ duckdb-graph index ./my-project --db graph.duckdb --rebuild  # full rebuild
 ```
 
 The `index` verb is incremental-by-default: it runs a full build when the
@@ -69,7 +69,7 @@ re-run. Pass `--rebuild` to force a full rebuild.
 
 ## MCP tool
 
-`duckdb-codegraph mcp` is an MCP-over-stdio server exposing three read-only
+`duckdb-graph mcp` is an MCP-over-stdio server exposing three read-only
 tools:
 
 - `impact(target, …)` — transitive reverse-dependency set for a symbol or file.
@@ -77,7 +77,7 @@ tools:
 - `report()` — introspects the index: database path, schema version, languages,
   and node/edge counts.
 
-An MCP client spawns `duckdb-codegraph mcp` as a child process in the same
+An MCP client spawns `duckdb-graph mcp` as a child process in the same
 container and talks to it over stdin/stdout; stdio is a same-container
 transport, not a network protocol.
 
@@ -85,9 +85,9 @@ The server also serves over __Streamable HTTP__, selected with
 `--transport http`:
 
 ```shell
-$ duckdb-codegraph mcp                                   # stdio (default)
-$ duckdb-codegraph mcp --transport http                  # http on 127.0.0.1:8000/mcp
-$ duckdb-codegraph mcp --transport http --host 127.0.0.1 --port 8000
+$ duckdb-graph mcp                                   # stdio (default)
+$ duckdb-graph mcp --transport http                  # http on 127.0.0.1:8000/mcp
+$ duckdb-graph mcp --transport http --host 127.0.0.1 --port 8000
 ```
 
 HTTP binds loopback `127.0.0.1:8000` at path `/mcp` by default; pass `--host`
@@ -121,19 +121,19 @@ Drive common tasks through `make`; do not call the underlying tools directly:
 - `make setup` — check and install the development toolchain
 - `make lint` / `make format` — check / apply ruff, mypy, markdownlint.
 - `make test` — run the pytest suite.
-- `make self-test` — capability evidence: index the package's own source with `duckdb-codegraph` and run a sequence of labelled requests (list files, list functions, change-impact traversal, cross-module symbol context, index overview, most-depended-upon hotspots), each printing a result and asserting a structural fact. Dogfoods the tool on a real multi-module codebase, distinct from the hermetic `make test` suite.
+- `make self-test` — capability evidence: index the package's own source with `duckdb-graph` and run a sequence of labelled requests (list files, list functions, change-impact traversal, cross-module symbol context, index overview, most-depended-upon hotspots), each printing a result and asserting a structural fact. Dogfoods the tool on a real multi-module codebase, distinct from the hermetic `make test` suite.
 - `make build` — build the wheel and sdist (version from the git tag via hatch-vcs).
 
 ## Project structure
 
 ```text
-duckdb-codegraph/
-├── src/duckdb_codegraph/   # the package
-│   ├── store.py            # the CodeGraphStore API
+duckdb-graph/
+├── src/duckdb_graph/   # the package
+│   ├── store.py            # the GraphStore API
 │   ├── indexer.py          # folder → DuckDB graph index
-│   ├── cli.py              # the duckdb-codegraph CLI (incl. the mcp verb)
+│   ├── cli.py              # the duckdb-graph CLI (incl. the mcp verb)
 │   ├── mcp_server.py       # the MCP-over-stdio server
-│   ├── config.py           # Settings / DUCKDB_CODEGRAPH_* env
+│   ├── config.py           # Settings / DUCKDB_GRAPH_* env
 │   ├── models.py           # Node / Edge / ImpactResult pydantic models
 │   ├── etag.py             # compute_etag content fingerprint
 │   └── extractors/         # pluggable extractors (python, javascript/typescript)
@@ -148,19 +148,19 @@ pushing a tag publishes to PyPI.
 ## Configuration
 
 Settings resolve with the precedence: explicit argument >
-`DUCKDB_CODEGRAPH_*` environment variable > default.
+`DUCKDB_GRAPH_*` environment variable > default.
 
 | Setting | Argument | Environment variable | Default |
 | --- | --- | --- | --- |
-| Database path | `db_path` | `DUCKDB_CODEGRAPH_DB_PATH` | `codegraph.duckdb` |
-| Indexed source root | `root` | `DUCKDB_CODEGRAPH_ROOT` | `None` |
-| Read-only | `read_only` | `DUCKDB_CODEGRAPH_READ_ONLY` | `false` |
+| Database path | `db_path` | `DUCKDB_GRAPH_DB_PATH` | `graph.duckdb` |
+| Indexed source root | `root` | `DUCKDB_GRAPH_ROOT` | `None` |
+| Read-only | `read_only` | `DUCKDB_GRAPH_READ_ONLY` | `false` |
 
 ## Pointers
 
 - Worked examples: [documentation/examples.md](documentation/examples.md) — the `make self-test` requests, explained with observed results.
-- Documentation site: <https://bernard357.github.io/duckdb-codegraph/>
-- PyPI project: <https://pypi.org/project/duckdb-codegraph/>
+- Documentation site: <https://bernard357.github.io/duckdb-graph/>
+- PyPI project: <https://pypi.org/project/duckdb-graph/>
 
 ## License
 

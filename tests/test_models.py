@@ -1,6 +1,6 @@
 """Construction and declared shape of the core data models."""
 
-from duckdb_codegraph.models import (
+from duckdb_graph.models import (
     EDGE_KINDS,
     NODE_KINDS,
     RESOLUTIONS,
@@ -133,7 +133,7 @@ def test_explanation_result_defaults_and_fields():
 
 def test_report_fields():
     report = Report(
-        db_path="codegraph.duckdb",
+        db_path="graph.duckdb",
         schema_version=1,
         languages=["python"],
         files_by_language={"python": 2},

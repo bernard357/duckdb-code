@@ -15,7 +15,7 @@ dependencies.
 from collections.abc import Callable
 from pathlib import Path
 
-from duckdb_codegraph.extractors.base import Extractor
+from duckdb_graph.extractors.base import Extractor
 
 ExtractorFactory = Callable[[], Extractor]
 
@@ -74,19 +74,19 @@ def detect_language(path: str) -> str | None:
 
 
 def _python_factory() -> Extractor:
-    from duckdb_codegraph.extractors.python import PythonExtractor
+    from duckdb_graph.extractors.python import PythonExtractor
 
     return PythonExtractor()
 
 
 def _js_factory() -> Extractor:
-    from duckdb_codegraph.extractors.javascript import JsTsExtractor
+    from duckdb_graph.extractors.javascript import JsTsExtractor
 
     return JsTsExtractor("javascript")
 
 
 def _ts_factory() -> Extractor:
-    from duckdb_codegraph.extractors.javascript import JsTsExtractor
+    from duckdb_graph.extractors.javascript import JsTsExtractor
 
     return JsTsExtractor("typescript")
 

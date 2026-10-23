@@ -4,16 +4,16 @@ import datetime
 import shutil
 from pathlib import Path
 
-from duckdb_codegraph.etag import compute_etag
-from duckdb_codegraph.extractors.python import PythonExtractor
-from duckdb_codegraph.indexer import _rebuild_file, index_folder
-from duckdb_codegraph.store import CodeGraphStore
+from duckdb_graph.etag import compute_etag
+from duckdb_graph.extractors.python import PythonExtractor
+from duckdb_graph.indexer import _rebuild_file, index_folder
+from duckdb_graph.store import GraphStore
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample"
 
 
-def _store(tmp_path) -> CodeGraphStore:
-    return CodeGraphStore(db_path=str(tmp_path / "codegraph.duckdb"))
+def _store(tmp_path) -> GraphStore:
+    return GraphStore(db_path=str(tmp_path / "graph.duckdb"))
 
 
 def _copy_fixture(tmp_path) -> Path:
@@ -27,7 +27,7 @@ def _copy_fixture(tmp_path) -> Path:
     return work
 
 
-def _node_ids(store: CodeGraphStore, path: str | None = None) -> set[str]:
+def _node_ids(store: GraphStore, path: str | None = None) -> set[str]:
     if path is None:
         rows = store._con.execute("SELECT node_id FROM nodes").fetchall()
     else:
@@ -37,14 +37,14 @@ def _node_ids(store: CodeGraphStore, path: str | None = None) -> set[str]:
     return {row[0] for row in rows}
 
 
-def _edge_set(store: CodeGraphStore) -> set[tuple[str, str, str, str, str]]:
+def _edge_set(store: GraphStore) -> set[tuple[str, str, str, str, str]]:
     rows = store._con.execute(
         "SELECT src_id, dst_id, kind, path, resolution FROM edges"
     ).fetchall()
     return {tuple(row) for row in rows}
 
 
-def _table_count(store: CodeGraphStore, table: str) -> int:
+def _table_count(store: GraphStore, table: str) -> int:
     return store._con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
 
 
@@ -68,8 +68,8 @@ def test_index_folder_counts(tmp_path):
 
 
 def test_index_folder_is_deterministic(tmp_path):
-    store_a = CodeGraphStore(db_path=str(tmp_path / "a.duckdb"))
-    store_b = CodeGraphStore(db_path=str(tmp_path / "b.duckdb"))
+    store_a = GraphStore(db_path=str(tmp_path / "a.duckdb"))
+    store_b = GraphStore(db_path=str(tmp_path / "b.duckdb"))
 
     report_a = index_folder(store_a, FIXTURE)
     report_b = index_folder(store_b, FIXTURE)
@@ -220,7 +220,7 @@ def test_incremental_cross_file_edges_are_re_resolved(tmp_path):
     assert report.mode == "incremental"
     assert report.rebuilt == 1
 
-    full_store = CodeGraphStore(db_path=str(tmp_path / "full.duckdb"))
+    full_store = GraphStore(db_path=str(tmp_path / "full.duckdb"))
     index_folder(full_store, work, rebuild=True)
 
     assert _edge_set(inc_store) == _edge_set(full_store)
@@ -266,7 +266,7 @@ def test_incremental_delete_drops_rows_and_dangling_edges(tmp_path):
 def _edge_set_of_full_rebuild(
     tmp_path, work: Path
 ) -> set[tuple[str, str, str, str, str]]:
-    full = CodeGraphStore(db_path=str(tmp_path / "full_cmp.duckdb"))
+    full = GraphStore(db_path=str(tmp_path / "full_cmp.duckdb"))
     index_folder(full, work, rebuild=True)
     edges = _edge_set(full)
     full.close()
@@ -313,7 +313,7 @@ def test_full_and_incremental_reach_identical_state(tmp_path):
     )
     index_folder(inc_store, work)
 
-    full_store = CodeGraphStore(db_path=str(tmp_path / "full.duckdb"))
+    full_store = GraphStore(db_path=str(tmp_path / "full.duckdb"))
     index_folder(full_store, work, rebuild=True)
 
     assert _node_ids(inc_store) == _node_ids(full_store)

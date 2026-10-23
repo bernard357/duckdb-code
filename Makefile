@@ -3,7 +3,7 @@ help:
 	@echo "$$ make setup     - Check prerequisites, create the venv, install tooling"
 	@echo "$$ make lint      - Run Ruff and Markdown lint checks"
 	@echo "$$ make test      - Run the pytest suite"
-	@echo "$$ make self-test - Capability evidence: run duckdb-codegraph on its own source"
+	@echo "$$ make self-test - Capability evidence: run duckdb-graph on its own source"
 	@echo "$$ make format    - Format Python code with Ruff"
 	@echo "$$ make build     - Build the wheel and sdist with uv"
 	@echo "$$ make clean     - Remove build artifacts and caches"
@@ -16,7 +16,7 @@ help:
 .EXPORT_ALL_VARIABLES:
 
 # default DuckDB database path
-DUCKDB_CODEGRAPH_DB_PATH ?= codegraph.duckdb
+DUCKDB_GRAPH_DB_PATH ?= graph.duckdb
 # default Python path for imports
 PYTHONPATH ?= .
 # source locations for static analysis

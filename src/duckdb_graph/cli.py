@@ -1,16 +1,16 @@
-"""Command-line interface for duckdb-codegraph.
+"""Command-line interface for duckdb-graph.
 
 Five verbs: ``index`` a folder of source code, ``report`` on database content,
 ``impact`` the reverse-dependency set of a target, ``explain`` a target's
 structure, and ``mcp`` to serve the read-only tools over stdio. All honor the
-``DUCKDB_CODEGRAPH_*`` environment variables and the ``--db`` override. Every
+``DUCKDB_GRAPH_*`` environment variables and the ``--db`` override. Every
 serving verb opens the store read-only; only ``index`` opens it writable.
 """
 
 import typer
 
-from duckdb_codegraph.indexer import index_folder
-from duckdb_codegraph.store import CodeGraphStore
+from duckdb_graph.indexer import index_folder
+from duckdb_graph.store import GraphStore
 
 app = typer.Typer(
     help="Embeddable code-graph impact analysis over a local DuckDB database.",
@@ -39,7 +39,7 @@ def index(
     ``--rebuild`` is passed; otherwise only changed, added, and deleted files
     are reconciled against the stored etags.
     """
-    store = CodeGraphStore(db_path=db)
+    store = GraphStore(db_path=db)
     try:
         report = index_folder(store, folder, recursive=recursive, rebuild=rebuild)
     finally:
@@ -67,7 +67,7 @@ def report(
     as_json: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
     """Report on database content."""
-    store = CodeGraphStore(db_path=db, read_only=True)
+    store = GraphStore(db_path=db, read_only=True)
     try:
         result = store.report()
     finally:
@@ -97,7 +97,7 @@ def impact(
     as_json: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
     """Report the transitive reverse-dependency set of a target."""
-    store = CodeGraphStore(db_path=db, read_only=True)
+    store = GraphStore(db_path=db, read_only=True)
     try:
         result = store.impact(target, depth=depth)
     finally:
@@ -123,7 +123,7 @@ def explain(
     as_json: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
     """Explain the structural neighbourhood of a target."""
-    store = CodeGraphStore(db_path=db, read_only=True)
+    store = GraphStore(db_path=db, read_only=True)
     try:
         result = store.explain(target)
     finally:
@@ -172,8 +172,8 @@ def mcp(
     ``127.0.0.1:8000`` (path ``/mcp``) by default. Serving stays read-only over
     both transports.
     """
-    from duckdb_codegraph.config import Settings
-    from duckdb_codegraph.mcp_server import run_http, run_stdio
+    from duckdb_graph.config import Settings
+    from duckdb_graph.mcp_server import run_http, run_stdio
 
     settings = Settings(db_path=db, read_only=True)
     if transport == "http":

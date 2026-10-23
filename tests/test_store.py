@@ -11,17 +11,15 @@ from pathlib import Path
 
 import pytest
 
-from duckdb_codegraph.indexer import index_folder
-from duckdb_codegraph.store import CodeGraphStore, ReadOnlyError
+from duckdb_graph.indexer import index_folder
+from duckdb_graph.store import GraphStore, ReadOnlyError
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample"
 
 
-def _indexed(tmp_path) -> CodeGraphStore:
+def _indexed(tmp_path) -> GraphStore:
     """Open a writable store, index the fixture, return it (root = fixture)."""
-    store = CodeGraphStore(
-        db_path=str(tmp_path / "codegraph.duckdb"), root=str(FIXTURE)
-    )
+    store = GraphStore(db_path=str(tmp_path / "graph.duckdb"), root=str(FIXTURE))
     index_folder(store, FIXTURE)
     return store
 
@@ -209,7 +207,7 @@ def test_report_aggregates_kinds_languages_and_roots(tmp_path):
 def test_report_empty_index_returns_empty_shape(tmp_path):
     empty_dir = tmp_path / "empty"
     empty_dir.mkdir()
-    store = CodeGraphStore(db_path=str(tmp_path / "empty.duckdb"), root=str(empty_dir))
+    store = GraphStore(db_path=str(tmp_path / "empty.duckdb"), root=str(empty_dir))
     index_folder(store, empty_dir)
     report = store.report()
     assert report.nodes_by_kind == {}
@@ -221,11 +219,11 @@ def test_report_empty_index_returns_empty_shape(tmp_path):
 
 
 def test_read_only_store_rejects_writes(tmp_path):
-    db_path = str(tmp_path / "codegraph.duckdb")
+    db_path = str(tmp_path / "graph.duckdb")
     writer = _indexed_at(db_path)
     writer.close()
 
-    reader = CodeGraphStore(db_path=db_path, read_only=True)
+    reader = GraphStore(db_path=db_path, read_only=True)
     with pytest.raises(ReadOnlyError):
         reader._guard_writable()
     with pytest.raises(ReadOnlyError):
@@ -233,8 +231,8 @@ def test_read_only_store_rejects_writes(tmp_path):
     reader.close()
 
 
-def _indexed_at(db_path: str) -> CodeGraphStore:
-    store = CodeGraphStore(db_path=db_path, root=str(FIXTURE))
+def _indexed_at(db_path: str) -> GraphStore:
+    store = GraphStore(db_path=db_path, root=str(FIXTURE))
     index_folder(store, FIXTURE)
     return store
 
@@ -244,7 +242,7 @@ def test_store_index_method_delegates_full_then_incremental(tmp_path):
 
     work = tmp_path / "tree"
     shutil.copytree(FIXTURE, work)
-    store = CodeGraphStore(db_path=str(tmp_path / "codegraph.duckdb"), root=str(work))
+    store = GraphStore(db_path=str(tmp_path / "graph.duckdb"), root=str(work))
 
     first = store.index(work)
     assert first.mode == "full"
@@ -259,7 +257,7 @@ def test_store_incremental_keeps_impact_correct_after_edit(tmp_path):
 
     work = tmp_path / "tree"
     shutil.copytree(FIXTURE, work)
-    store = CodeGraphStore(db_path=str(tmp_path / "codegraph.duckdb"), root=str(work))
+    store = GraphStore(db_path=str(tmp_path / "graph.duckdb"), root=str(work))
     store.index(work)
 
     # Edit charge.py (shifts the Base/Charge node ids); the incremental run must

@@ -2,7 +2,7 @@
 
 import pytest
 
-from duckdb_codegraph.extractors.registry import (
+from duckdb_graph.extractors.registry import (
     EXTENSION_LANGUAGE,
     detect_language,
     register_extension,

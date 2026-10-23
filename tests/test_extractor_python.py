@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from duckdb_codegraph.extractors.python import PythonExtractor
+from duckdb_graph.extractors.python import PythonExtractor
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample"
 

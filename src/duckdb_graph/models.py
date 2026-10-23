@@ -1,4 +1,4 @@
-"""Core data models for duckdb-codegraph.
+"""Core data models for duckdb-graph.
 
 All models are pydantic ``BaseModel``. Node ``kind``, edge ``kind``, and
 ``resolution`` are kept as plain strings (not enums) so a future language can

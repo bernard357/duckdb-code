@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from duckdb_codegraph.extractors.javascript import JsTsExtractor
+from duckdb_graph.extractors.javascript import JsTsExtractor
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample"
 

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from duckdb_codegraph.cli import app
+from duckdb_graph.cli import app
 
 runner = CliRunner()
 
@@ -147,10 +147,10 @@ def test_mcp_verb_is_wired():
 
 
 def test_mcp_http_transport_dispatches_to_run_http(monkeypatch):
-    # The verb imports the runners lazily from duckdb_codegraph.mcp_server; patch
+    # The verb imports the runners lazily from duckdb_graph.mcp_server; patch
     # them there and assert --transport http routes to run_http with the parsed
     # host/port and never touches run_stdio.
-    import duckdb_codegraph.mcp_server as mcp_server
+    import duckdb_graph.mcp_server as mcp_server
 
     calls = {}
     monkeypatch.setattr(
@@ -169,7 +169,7 @@ def test_mcp_http_transport_dispatches_to_run_http(monkeypatch):
 
 
 def test_mcp_default_dispatches_to_run_stdio(monkeypatch):
-    import duckdb_codegraph.mcp_server as mcp_server
+    import duckdb_graph.mcp_server as mcp_server
 
     calls = {}
     monkeypatch.setattr(mcp_server, "run_stdio", lambda *a, **k: calls.update(stdio=1))

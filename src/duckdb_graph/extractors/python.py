@@ -19,8 +19,8 @@ Node-type names below were confirmed against the installed grammar pack
 
 from pathlib import PurePosixPath
 
-from duckdb_codegraph.extractors.base import Extraction
-from duckdb_codegraph.models import Edge, Node
+from duckdb_graph.extractors.base import Extraction
+from duckdb_graph.models import Edge, Node
 
 # Unresolved-edge target marker. The resolution pass splits on this to recover
 # the raw target string the extractor recorded; it is never a real node_id.

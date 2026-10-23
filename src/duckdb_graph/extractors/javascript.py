@@ -21,8 +21,8 @@ JS and ``extends_clause`` in TS), ``lexical_declaration`` ->
 
 from pathlib import PurePosixPath
 
-from duckdb_codegraph.extractors.base import Extraction
-from duckdb_codegraph.models import Edge, Node
+from duckdb_graph.extractors.base import Extraction
+from duckdb_graph.models import Edge, Node
 
 UNRESOLVED = "?"
 

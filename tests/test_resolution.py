@@ -1,8 +1,8 @@
 """The resolution pass as a pure function (no DuckDB)."""
 
-from duckdb_codegraph.extractors.python import UNRESOLVED
-from duckdb_codegraph.indexer import _resolve_js_specifier, resolve_edges
-from duckdb_codegraph.models import Edge, Node
+from duckdb_graph.extractors.python import UNRESOLVED
+from duckdb_graph.indexer import _resolve_js_specifier, resolve_edges
+from duckdb_graph.models import Edge, Node
 
 
 def _node(kind, qn, path, line=1, language="python"):

@@ -1,7 +1,7 @@
-"""Self-test: run duckdb-codegraph against its own source as capability evidence.
+"""Self-test: run duckdb-graph against its own source as capability evidence.
 
 This dogfoods the tool on a real, multi-module Python codebase (the package's
-own ``src/duckdb_codegraph/``) and prints a sequence of labelled *requests* —
+own ``src/duckdb_graph/``) and prints a sequence of labelled *requests* —
 list files, list functions, a change-impact traversal, cross-module symbol
 context, an index overview, and a most-depended-upon hotspot ranking. Each
 request prints a concise, human-readable result and asserts a structural
@@ -20,11 +20,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-from duckdb_codegraph.store import _DEPENDENCY_KINDS, CodeGraphStore
+from duckdb_graph.store import _DEPENDENCY_KINDS, GraphStore
 
 # The package source tree, resolved relative to this script (scripts/ -> repo).
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SOURCE_DIR = REPO_ROOT / "src" / "duckdb_codegraph"
+SOURCE_DIR = REPO_ROOT / "src" / "duckdb_graph"
 
 # Files known to be in the package source; their absence means the walk or the
 # extractor silently dropped a module.
@@ -34,14 +34,14 @@ EXPECTED_FILES = ("store.py", "indexer.py", "cli.py", "mcp_server.py")
 EXPECTED_FUNCTIONS = ("index_folder", "compute_etag")
 
 # The impact probe: index_folder is a load-bearing internal entry point called
-# by both CodeGraphStore.index and _rebuild_file, so its reverse-dependency set
+# by both GraphStore.index and _rebuild_file, so its reverse-dependency set
 # has stable, known members. Membership is asserted on names; the provenance
 # label (exact vs best_effort) is intentionally not asserted.
 IMPACT_PROBE = "index_folder"
 EXPECTED_DEPENDENTS = ("_rebuild_file", "index")
 
 # The class whose cross-module context the suite prints.
-CONTEXT_CLASS = "CodeGraphStore"
+CONTEXT_CLASS = "GraphStore"
 
 HOTSPOT_TOP_N = 5
 
@@ -59,7 +59,7 @@ def _header(label: str) -> None:
     print(f"\nREQUEST: {label}")
 
 
-def request_list_files(store: CodeGraphStore) -> str:
+def request_list_files(store: GraphStore) -> str:
     """List the indexed source files (file-kind nodes)."""
     _header("list files")
     rows = store._con.execute(
@@ -74,7 +74,7 @@ def request_list_files(store: CodeGraphStore) -> str:
     return f"{len(paths)} files, all expected modules present"
 
 
-def request_list_functions(store: CodeGraphStore) -> str:
+def request_list_functions(store: GraphStore) -> str:
     """List the indexed functions (function-kind nodes)."""
     _header("list functions")
     rows = store._con.execute(
@@ -93,7 +93,7 @@ def request_list_functions(store: CodeGraphStore) -> str:
     return f"{len(qnames)} functions, incl. {', '.join(EXPECTED_FUNCTIONS)}"
 
 
-def request_impact(store: CodeGraphStore) -> str:
+def request_impact(store: GraphStore) -> str:
     """Traversal: files and symbols impacted by a change to a symbol."""
     _header(f"impact of a change to {IMPACT_PROBE!r}")
     impact = store.impact(IMPACT_PROBE)
@@ -120,7 +120,7 @@ def request_impact(store: CodeGraphStore) -> str:
     )
 
 
-def request_context(store: CodeGraphStore) -> str:
+def request_context(store: GraphStore) -> str:
     """Cross-module context of a symbol via explain."""
     _header(f"cross-module context of {CONTEXT_CLASS!r}")
     result = store.explain(CONTEXT_CLASS)
@@ -153,7 +153,7 @@ def request_context(store: CodeGraphStore) -> str:
     )
 
 
-def request_overview(store: CodeGraphStore) -> str:
+def request_overview(store: GraphStore) -> str:
     """One-glance profile of the indexed codebase via report()."""
     _header("index overview")
     report = store.report()
@@ -169,7 +169,7 @@ def request_overview(store: CodeGraphStore) -> str:
     return f"{node_total} nodes, {edge_total} edges across {report.languages}"
 
 
-def request_hotspots(store: CodeGraphStore) -> str:
+def request_hotspots(store: GraphStore) -> str:
     """Rank the most-depended-upon symbols by reverse-dependency fan-in."""
     _header("most-depended-upon symbols (hotspots)")
     placeholders = ", ".join("?" for _ in _DEPENDENCY_KINDS)
@@ -201,7 +201,7 @@ REQUESTS = (
 )
 
 
-def run_requests(store: CodeGraphStore) -> list[str]:
+def run_requests(store: GraphStore) -> list[str]:
     """Index the package source, then run every request, returning summaries."""
     store.index(SOURCE_DIR)
     return [request(store) for request in REQUESTS]
@@ -211,7 +211,7 @@ def main() -> int:
     _require_source_exists()
     with tempfile.TemporaryDirectory() as tmp:
         db_path = str(Path(tmp) / "self_test.duckdb")
-        store = CodeGraphStore(db_path=db_path)
+        store = GraphStore(db_path=db_path)
         try:
             summaries = run_requests(store)
         finally:

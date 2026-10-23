@@ -1,7 +1,7 @@
-"""MCP-over-stdio server exposing duckdb-codegraph tools as read-only tools.
+"""MCP-over-stdio server exposing duckdb-graph tools as read-only tools.
 
 Any MCP client (Docker Agent, Claude Desktop, Claude Code, Cursor) can spawn
-``duckdb-codegraph mcp`` as a subprocess and call the ``impact``, ``explain``,
+``duckdb-graph mcp`` as a subprocess and call the ``impact``, ``explain``,
 and ``report`` tools. The server is built on the official ``mcp`` SDK.
 
 Note on the import path: in the ``mcp`` 2.x SDK the server class is
@@ -19,25 +19,25 @@ shape per tool.
 
 from mcp.server.mcpserver import MCPServer
 
-from duckdb_codegraph.config import Settings
-from duckdb_codegraph.store import CodeGraphStore
+from duckdb_graph.config import Settings
+from duckdb_graph.store import GraphStore
 
 
 def build_server(settings: Settings | None = None) -> MCPServer:
     """Build the MCP server and register the read-only code-graph tools.
 
     A single :class:`Settings` is resolved once (honoring the
-    ``DUCKDB_CODEGRAPH_*`` environment variables and any ``db`` passed from the
+    ``DUCKDB_GRAPH_*`` environment variables and any ``db`` passed from the
     CLI verb) and reused by every tool call, each opening its own read-only
-    :class:`CodeGraphStore`.
+    :class:`GraphStore`.
     """
     resolved = settings or Settings()
-    server: MCPServer = MCPServer(name="duckdb-codegraph")
+    server: MCPServer = MCPServer(name="duckdb-graph")
 
     @server.tool()
     def impact(target: str, depth: int | None = None) -> dict:
         """Transitive reverse-dependency set of a symbol or file path."""
-        store = CodeGraphStore(settings=_read_only(resolved))
+        store = GraphStore(settings=_read_only(resolved))
         try:
             return store.impact(target, depth=depth).model_dump()
         finally:
@@ -46,7 +46,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
     @server.tool()
     def explain(target: str) -> dict:
         """Structural neighbourhood of a symbol or file path."""
-        store = CodeGraphStore(settings=_read_only(resolved))
+        store = GraphStore(settings=_read_only(resolved))
         try:
             return store.explain(target).model_dump()
         finally:
@@ -55,7 +55,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
     @server.tool()
     def report() -> dict:
         """Introspect the index: db path, schema version, kinds, languages."""
-        store = CodeGraphStore(settings=_read_only(resolved))
+        store = GraphStore(settings=_read_only(resolved))
         try:
             return store.report().model_dump()
         finally:

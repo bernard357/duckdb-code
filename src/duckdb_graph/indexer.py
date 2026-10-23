@@ -19,12 +19,12 @@ from pathlib import Path, PurePosixPath
 
 from pydantic import BaseModel
 
-from duckdb_codegraph.etag import compute_etag
-from duckdb_codegraph.extractors.base import Extraction
-from duckdb_codegraph.extractors.python import UNRESOLVED
-from duckdb_codegraph.extractors.registry import detect_language, resolve_extractor
-from duckdb_codegraph.models import Edge, Node
-from duckdb_codegraph.store import INDEX_DDL, SCHEMA_DDL, SCHEMA_VERSION, CodeGraphStore
+from duckdb_graph.etag import compute_etag
+from duckdb_graph.extractors.base import Extraction
+from duckdb_graph.extractors.python import UNRESOLVED
+from duckdb_graph.extractors.registry import detect_language, resolve_extractor
+from duckdb_graph.models import Edge, Node
+from duckdb_graph.store import INDEX_DDL, SCHEMA_DDL, SCHEMA_VERSION, GraphStore
 
 logger = logging.getLogger(__name__)
 
@@ -281,7 +281,7 @@ def _strip_ext(path: str) -> str:
 
 
 def index_folder(
-    store: CodeGraphStore,
+    store: GraphStore,
     folder: str | Path,
     recursive: bool = True,
     *,
@@ -348,7 +348,7 @@ def _extract_folder(
     return file_rows, all_nodes, all_edges, languages, skipped
 
 
-def _full_index(store: CodeGraphStore, folder: Path, recursive: bool) -> IndexReport:
+def _full_index(store: GraphStore, folder: Path, recursive: bool) -> IndexReport:
     """Full rebuild: recreate the tables and rewrite the whole graph."""
     _recreate_tables(store)
     build_stamp = datetime.datetime.now(datetime.UTC)
@@ -369,15 +369,13 @@ def _full_index(store: CodeGraphStore, folder: Path, recursive: bool) -> IndexRe
     )
 
 
-def _db_is_populated(store: CodeGraphStore) -> bool:
+def _db_is_populated(store: GraphStore) -> bool:
     """Return ``True`` when the ``files`` table already holds at least one row."""
     row = store._con.execute("SELECT COUNT(*) FROM files").fetchone()
     return bool(row and row[0] > 0)
 
 
-def _incremental_index(
-    store: CodeGraphStore, folder: Path, recursive: bool
-) -> IndexReport:
+def _incremental_index(store: GraphStore, folder: Path, recursive: bool) -> IndexReport:
     """Reconcile a populated database against the current on-disk folder.
 
     Compares each live file's freshly computed etag against its stored etag to
@@ -424,13 +422,13 @@ def _incremental_index(
     )
 
 
-def _stored_etags(store: CodeGraphStore) -> dict[str, str]:
+def _stored_etags(store: GraphStore) -> dict[str, str]:
     """Return the ``{path: etag}`` map of the files currently in the database."""
     rows = store._con.execute("SELECT path, etag FROM files").fetchall()
     return {row[0]: row[1] for row in rows}
 
 
-def _noop_report(store: CodeGraphStore, skipped: int, *, mode: str) -> IndexReport:
+def _noop_report(store: GraphStore, skipped: int, *, mode: str) -> IndexReport:
     """Build a no-change report from the whole-graph totals in the database."""
     con = store._con
     file_rows = con.execute("SELECT language FROM files").fetchall()
@@ -459,7 +457,7 @@ def _iter_files(folder: Path, recursive: bool) -> list[Path]:
     return sorted(p for p in folder.glob(pattern) if p.is_file())
 
 
-def _recreate_tables(store: CodeGraphStore) -> None:
+def _recreate_tables(store: GraphStore) -> None:
     """Drop and recreate the content tables for a v1 full rebuild.
 
     Schema/index DDL is owned by the store so the indexer's recreation and
@@ -475,7 +473,7 @@ def _recreate_tables(store: CodeGraphStore) -> None:
 
 
 def _write(
-    store: CodeGraphStore,
+    store: GraphStore,
     file_rows: list[tuple[str, str, str]],
     nodes: list[Node],
     edges: list[Edge],
@@ -531,7 +529,7 @@ def _write(
 
 
 def _rebuild_file(
-    store: CodeGraphStore,
+    store: GraphStore,
     path: str,
     extraction: Extraction,
     language: str,
