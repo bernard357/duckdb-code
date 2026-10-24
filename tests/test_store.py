@@ -349,6 +349,68 @@ def test_store_index_method_delegates_full_then_incremental(tmp_path):
     store.close()
 
 
+def test_export_meta_matches_report(tmp_path):
+    store = _indexed(tmp_path)
+    export = store.export()
+    assert export.meta == store.report()
+    store.close()
+
+
+def test_export_counts_match_tables(tmp_path):
+    store = _indexed(tmp_path)
+    export = store.export()
+    node_count = store._con.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+    edge_count = store._con.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+    assert len(export.nodes) == node_count
+    assert len(export.edges) == edge_count
+    store.close()
+
+
+def test_export_edges_reference_real_nodes(tmp_path):
+    store = _indexed(tmp_path)
+    export = store.export()
+    node_ids = {node.id for node in export.nodes}
+    for edge in export.edges:
+        assert edge.source in node_ids
+        assert edge.target in node_ids
+    store.close()
+
+
+def test_export_serialized_keys_are_cytoscape_shape(tmp_path):
+    store = _indexed(tmp_path)
+    export = store.export()
+    node_dump = export.nodes[0].model_dump()
+    assert set(node_dump) == {
+        "id",
+        "kind",
+        "name",
+        "qualified_name",
+        "path",
+        "language",
+        "start_line",
+        "end_line",
+    }
+    assert "node_id" not in node_dump
+    edge_dump = export.edges[0].model_dump()
+    assert set(edge_dump) == {"source", "target", "kind", "resolution"}
+    assert "src_id" not in edge_dump
+    assert "dst_id" not in edge_dump
+    store.close()
+
+
+def test_export_runs_on_read_only_store(tmp_path):
+    db_path = str(tmp_path / "graph.duckdb")
+    writer = _indexed_at(db_path)
+    writer_export = writer.export()
+    writer.close()
+
+    reader = GraphStore(db_path=db_path, read_only=True)
+    export = reader.export()
+    assert len(export.nodes) == len(writer_export.nodes)
+    assert len(export.edges) == len(writer_export.edges)
+    reader.close()
+
+
 def test_store_incremental_keeps_impact_correct_after_edit(tmp_path):
     import shutil
 

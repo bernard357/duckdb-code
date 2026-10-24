@@ -1,11 +1,14 @@
 """Command-line interface for duckdb-graph.
 
-Five verbs: ``index`` a folder of source code, ``report`` on database content,
+Six verbs: ``index`` a folder of source code, ``report`` on database content,
 ``impact`` the reverse-dependency set of a target, ``explain`` a target's
-structure, and ``mcp`` to serve the read-only tools over stdio. All honor the
+structure, ``export`` the whole graph in the viewer's Cytoscape shape, and
+``mcp`` to serve the read-only tools over stdio. All honor the
 ``DUCKDB_GRAPH_*`` environment variables and the ``--db`` override. Every
 serving verb opens the store read-only; only ``index`` opens it writable.
 """
+
+from pathlib import Path
 
 import typer
 
@@ -150,6 +153,26 @@ def explain(
                 typer.echo(f"  base    : {base.qualified_name}")
             for subclass in explanation.subclasses:
                 typer.echo(f"  subclass: {subclass.qualified_name}")
+
+
+@app.command()
+def export(
+    db: str | None = typer.Option(None, "--db", help="DuckDB file path."),
+    out: str | None = typer.Option(
+        None, "--out", help="Output JSON path (default: stdout)."
+    ),
+) -> None:
+    """Export the whole graph in the viewer's Cytoscape JSON shape."""
+    store = GraphStore(db_path=db, read_only=True)
+    try:
+        result = store.export()
+    finally:
+        store.close()
+    text = result.model_dump_json(indent=2)
+    if out is not None:
+        Path(out).write_text(text, encoding="utf-8")
+    else:
+        typer.echo(text)
 
 
 @app.command()

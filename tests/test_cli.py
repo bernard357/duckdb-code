@@ -24,10 +24,10 @@ def _index(tmp_path) -> str:
     return db
 
 
-def test_help_lists_all_five_verbs():
+def test_help_lists_all_verbs():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0, result.output
-    for verb in ("index", "report", "impact", "explain", "mcp"):
+    for verb in ("index", "report", "impact", "explain", "export", "mcp"):
         assert verb in result.output
 
 
@@ -137,6 +137,27 @@ def test_index_rebuild_forces_full_and_plain_rerun_is_incremental(tmp_path):
     )
     assert forced.exit_code == 0, forced.output
     assert json.loads(forced.output)["mode"] == "full"
+
+
+def test_export_stdout_json_shape(tmp_path):
+    db = _index(tmp_path)
+    result = runner.invoke(app, ["export", "--db", db])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert set(payload) == {"meta", "nodes", "edges"}
+
+
+def test_export_out_writes_json_file(tmp_path):
+    db = _index(tmp_path)
+    out = tmp_path / "graph.json"
+    result = runner.invoke(app, ["export", "--db", db, "--out", str(out)])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert set(payload) == {"meta", "nodes", "edges"}
+    node_ids = {node["id"] for node in payload["nodes"]}
+    for edge in payload["edges"]:
+        assert edge["source"] in node_ids
+        assert edge["target"] in node_ids
 
 
 def test_mcp_verb_is_wired():

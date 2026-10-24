@@ -137,3 +137,51 @@ class Report(BaseModel):
     nodes_by_kind: dict[str, int]
     edges_by_kind: dict[str, int]
     roots: list[str]
+
+
+class GraphExportNode(BaseModel):
+    """A node in the Cytoscape-shaped graph export.
+
+    The stored :class:`Node` key ``node_id`` is deliberately renamed to ``id``
+    here because Cytoscape requires each element's data to carry an ``id``. The
+    field is named ``id`` directly (no alias) so ``model_dump()`` and
+    ``model_dump_json()`` always emit the Cytoscape shape.
+    """
+
+    id: str
+    kind: str
+    name: str
+    qualified_name: str
+    path: str
+    language: str
+    start_line: int
+    end_line: int
+
+
+class GraphExportEdge(BaseModel):
+    """An edge in the Cytoscape-shaped graph export.
+
+    The stored :class:`Edge` keys ``src_id`` and ``dst_id`` are deliberately
+    renamed to ``source`` and ``target`` here because Cytoscape requires each
+    edge's data to carry ``source`` and ``target`` endpoints. The fields are
+    named ``source``/``target`` directly (no aliases) so ``model_dump()`` and
+    ``model_dump_json()`` always emit the Cytoscape shape.
+    """
+
+    source: str
+    target: str
+    kind: str
+    resolution: str
+
+
+class GraphExport(BaseModel):
+    """The whole graph serialized for the viewer in the Cytoscape data contract.
+
+    ``meta`` is the :class:`Report` introspection; ``nodes`` and ``edges`` carry
+    the id/source/target-renamed elements. This is the stable shape the web
+    viewer consumes.
+    """
+
+    meta: Report
+    nodes: list[GraphExportNode]
+    edges: list[GraphExportEdge]

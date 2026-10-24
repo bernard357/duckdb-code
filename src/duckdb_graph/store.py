@@ -23,6 +23,9 @@ from duckdb_graph.extractors.registry import EXTENSION_LANGUAGE
 from duckdb_graph.models import (
     Explanation,
     ExplanationResult,
+    GraphExport,
+    GraphExportEdge,
+    GraphExportNode,
     ImpactNode,
     ImpactResult,
     Node,
@@ -574,3 +577,46 @@ class GraphStore:
             edges_by_kind=edges_by_kind,
             roots=roots,
         )
+
+    def export(self) -> GraphExport:
+        """Export the whole graph in the viewer's Cytoscape data contract.
+
+        Read-only compatible: performs no writes and never calls
+        :meth:`_guard_writable`, so it runs against a store opened with
+        ``read_only=True``. One ordered read per table (``nodes`` then
+        ``edges``) feeds the renamed export models — the stored ``node_id``
+        becomes ``id`` and ``src_id``/``dst_id`` become ``source``/``target``
+        because Cytoscape requires those keys.
+        """
+        meta = self.report()
+        node_rows = self._con.execute(
+            "SELECT node_id, kind, name, qualified_name, path, language, "
+            "start_line, end_line FROM nodes ORDER BY path, start_line, node_id"
+        ).fetchall()
+        nodes = [
+            GraphExportNode(
+                id=row[0],
+                kind=row[1],
+                name=row[2],
+                qualified_name=row[3],
+                path=row[4],
+                language=row[5],
+                start_line=row[6],
+                end_line=row[7],
+            )
+            for row in node_rows
+        ]
+        edge_rows = self._con.execute(
+            "SELECT src_id, dst_id, kind, resolution FROM edges "
+            "ORDER BY src_id, dst_id, kind"
+        ).fetchall()
+        edges = [
+            GraphExportEdge(
+                source=row[0],
+                target=row[1],
+                kind=row[2],
+                resolution=row[3],
+            )
+            for row in edge_rows
+        ]
+        return GraphExport(meta=meta, nodes=nodes, edges=edges)
