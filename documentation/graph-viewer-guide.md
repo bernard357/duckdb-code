@@ -85,8 +85,6 @@ graph understands:
 Each node kind gets a distinct shape and colour and each edge kind a distinct
 colour, so a code export and a Markdown export are both legible at a glance.
 
-![Graph viewer screenshot placeholder](graph-viewer-screenshot.png)
-
 ## Offline use {#offline-use}
 
 The viewer loads Cytoscape.js from a pinned CDN by default. To run without a

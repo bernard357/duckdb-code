@@ -1,13 +1,20 @@
 help:
 	@echo "Common commands:"
-	@echo "$$ make setup     - Check prerequisites, create the venv, install tooling"
-	@echo "$$ make lint      - Run Ruff and Markdown lint checks"
-	@echo "$$ make test      - Run the pytest suite"
-	@echo "$$ make self-test - Capability evidence: run duckdb-graph on its own source"
-	@echo "$$ make format    - Format Python code with Ruff"
-	@echo "$$ make build     - Build the wheel and sdist with uv"
-	@echo "$$ make clean     - Remove build artifacts and caches"
-	@echo "$$ make push      - Rebase onto main and push commits to git remote"
+	@echo "$$ make setup                 - Check prerequisites, create the venv, install tooling"
+	@echo "$$ make format                - Format Python code with Ruff"
+	@echo "$$ make lint                  - Run Ruff and Markdown lint checks"
+	@echo "$$ make test                  - Run the pytest suite"
+	@echo "$$ make self-test             - Capability evidence: run duckdb-graph on its own source"
+	@echo "$$ make build                 - Build the wheel and sdist with uv"
+	@echo "Documentation site:"
+	@echo "$$ make setup-documentation   - Install the VitePress toolchain (npm ci)"
+	@echo "$$ make serve-documentation   - Run the VitePress dev server"
+	@echo "$$ make build-documentation   - Build the static site into documentation/.vitepress/dist"
+	@echo "$$ make preview-documentation - Preview the built static site locally"
+	@echo "$$ make clean-documentation   - Remove the VitePress dist and cache"
+	@echo "Housekeeping:"
+	@echo "$$ make clean                 - Remove build artifacts and caches"
+	@echo "$$ make push                  - Rebase onto main and push commits to git remote"
 	@echo " ... and you have access to git, uv, ruff and pytest directly as well."
 
 # combine lines of each target
@@ -22,7 +29,7 @@ PYTHONPATH ?= .
 # source locations for static analysis
 PYTHON_PATHS := src/ tests/ scripts/
 # markdown files for static analysis
-MARKDOWN_FILES := README.md AGENTS.md $(shell find documentation -name '*.md')
+MARKDOWN_FILES := README.md AGENTS.md CONTRIBUTING.md CHANGES.md $(shell find documentation -name '*.md')
 
 setup: check-prerequisites setup-python setup-markdownlint
 
@@ -79,10 +86,32 @@ build:
 	@echo "Building wheel and sdist..."
 	uv build
 
+setup-documentation:
+	@echo "Installing the VitePress toolchain..."
+	npm ci
+
+serve-documentation:
+	@echo "Starting the VitePress dev server..."
+	npm run dev
+
+build-documentation:
+	@echo "Building the static documentation site..."
+	npm run build
+
+preview-documentation:
+	@echo "Previewing the built documentation site..."
+	npm run preview
+
+clean-documentation:
+	@echo "Removing the VitePress dist and cache..."
+	rm -rf documentation/.vitepress/dist documentation/.vitepress/cache
+
 clean:
 	@echo "Removing build artifacts and caches..."
 	rm -rf dist build *.egg-info src/*.egg-info *.out
 	rm -rf .ruff_cache .pytest_cache
+	rm -rf documentation/.vitepress/dist documentation/.vitepress/cache
+	rm -f *.duckdb
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +
 
 rebase:
