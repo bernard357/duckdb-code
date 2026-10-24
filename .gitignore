@@ -6,3 +6,6 @@ __pycache__/
 .ruff_cache/
 .pytest_cache/
 *.duckdb
+node_modules/
+documentation/.vitepress/dist/
+documentation/.vitepress/cache/

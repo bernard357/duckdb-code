@@ -1,0 +1,36 @@
+name: integrate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v5
+
+      # Tooling that `make setup` expects but cannot install itself on a bare
+      # runner: uv (Python env) and markdownlint-cli (lint-markdown). Installing
+      # them here keeps CI running the exact same `make lint` / `make test` a
+      # developer runs locally — one source of truth.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+      - name: Install markdownlint-cli
+        run: npm install -g markdownlint-cli
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Setup
+        run: make setup PYTHON_VERSION=${{ matrix.python-version }}
+      - name: Lint
+        run: make lint
+      - name: Test
+        run: make test
+      - name: Self-test
+        run: make self-test
