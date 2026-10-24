@@ -1,0 +1,309 @@
+{
+  "meta": {
+    "db_path": "tmp/kg.duckdb",
+    "schema_version": 1,
+    "languages": [
+      "markdown"
+    ],
+    "files_by_language": {
+      "markdown": 4
+    },
+    "nodes_by_kind": {
+      "heading": 7,
+      "page": 4,
+      "tag": 5
+    },
+    "edges_by_kind": {
+      "defines": 7,
+      "links_to": 7,
+      "tagged": 6
+    },
+    "roots": [
+      "tests/fixtures/markdown"
+    ]
+  },
+  "nodes": [
+    {
+      "id": "tag:architecture",
+      "kind": "tag",
+      "name": "architecture",
+      "qualified_name": "architecture",
+      "path": "",
+      "language": "markdown",
+      "start_line": 0,
+      "end_line": 0
+    },
+    {
+      "id": "tag:guide",
+      "kind": "tag",
+      "name": "guide",
+      "qualified_name": "guide",
+      "path": "",
+      "language": "markdown",
+      "start_line": 0,
+      "end_line": 0
+    },
+    {
+      "id": "tag:knowledge-base",
+      "kind": "tag",
+      "name": "knowledge-base",
+      "qualified_name": "knowledge-base",
+      "path": "",
+      "language": "markdown",
+      "start_line": 0,
+      "end_line": 0
+    },
+    {
+      "id": "tag:orphan",
+      "kind": "tag",
+      "name": "orphan",
+      "qualified_name": "orphan",
+      "path": "",
+      "language": "markdown",
+      "start_line": 0,
+      "end_line": 0
+    },
+    {
+      "id": "tag:overview",
+      "kind": "tag",
+      "name": "overview",
+      "qualified_name": "overview",
+      "path": "",
+      "language": "markdown",
+      "start_line": 0,
+      "end_line": 0
+    },
+    {
+      "id": "heading:guide.md#guide@guide.md:1",
+      "kind": "heading",
+      "name": "Guide",
+      "qualified_name": "guide.md#guide",
+      "path": "guide.md",
+      "language": "markdown",
+      "start_line": 1,
+      "end_line": 1
+    },
+    {
+      "id": "page:guide.md@guide.md:1",
+      "kind": "page",
+      "name": "guide",
+      "qualified_name": "guide.md",
+      "path": "guide.md",
+      "language": "markdown",
+      "start_line": 1,
+      "end_line": 9
+    },
+    {
+      "id": "heading:guide.md#usage@guide.md:6",
+      "kind": "heading",
+      "name": "Usage",
+      "qualified_name": "guide.md#usage",
+      "path": "guide.md",
+      "language": "markdown",
+      "start_line": 6,
+      "end_line": 6
+    },
+    {
+      "id": "page:index.md@index.md:1",
+      "kind": "page",
+      "name": "index",
+      "qualified_name": "index.md",
+      "path": "index.md",
+      "language": "markdown",
+      "start_line": 1,
+      "end_line": 24
+    },
+    {
+      "id": "heading:index.md#knowledge-base@index.md:8",
+      "kind": "heading",
+      "name": "Knowledge Base",
+      "qualified_name": "index.md#knowledge-base",
+      "path": "index.md",
+      "language": "markdown",
+      "start_line": 8,
+      "end_line": 8
+    },
+    {
+      "id": "heading:index.md#getting-started@index.md:16",
+      "kind": "heading",
+      "name": "Getting Started",
+      "qualified_name": "index.md#getting-started",
+      "path": "index.md",
+      "language": "markdown",
+      "start_line": 16,
+      "end_line": 16
+    },
+    {
+      "id": "heading:index.md#getting-started-1@index.md:21",
+      "kind": "heading",
+      "name": "Getting Started",
+      "qualified_name": "index.md#getting-started-1",
+      "path": "index.md",
+      "language": "markdown",
+      "start_line": 21,
+      "end_line": 21
+    },
+    {
+      "id": "heading:orphan.md#orphan@orphan.md:1",
+      "kind": "heading",
+      "name": "Orphan",
+      "qualified_name": "orphan.md#orphan",
+      "path": "orphan.md",
+      "language": "markdown",
+      "start_line": 1,
+      "end_line": 1
+    },
+    {
+      "id": "page:orphan.md@orphan.md:1",
+      "kind": "page",
+      "name": "orphan",
+      "qualified_name": "orphan.md",
+      "path": "orphan.md",
+      "language": "markdown",
+      "start_line": 1,
+      "end_line": 5
+    },
+    {
+      "id": "heading:reference-notes.md#reference-notes@reference-notes.md:1",
+      "kind": "heading",
+      "name": "Reference Notes",
+      "qualified_name": "reference-notes.md#reference-notes",
+      "path": "reference-notes.md",
+      "language": "markdown",
+      "start_line": 1,
+      "end_line": 1
+    },
+    {
+      "id": "page:reference-notes.md@reference-notes.md:1",
+      "kind": "page",
+      "name": "reference-notes",
+      "qualified_name": "reference-notes.md",
+      "path": "reference-notes.md",
+      "language": "markdown",
+      "start_line": 1,
+      "end_line": 5
+    }
+  ],
+  "edges": [
+    {
+      "source": "page:guide.md@guide.md:1",
+      "target": "heading:guide.md#guide@guide.md:1",
+      "kind": "defines",
+      "resolution": "exact"
+    },
+    {
+      "source": "page:guide.md@guide.md:1",
+      "target": "heading:guide.md#usage@guide.md:6",
+      "kind": "defines",
+      "resolution": "exact"
+    },
+    {
+      "source": "page:guide.md@guide.md:1",
+      "target": "page:index.md@index.md:1",
+      "kind": "links_to",
+      "resolution": "exact"
+    },
+    {
+      "source": "page:guide.md@guide.md:1",
+      "target": "page:reference-notes.md@reference-notes.md:1",
+      "kind": "links_to",
+      "resolution": "exact"
+    },
+    {
+      "source": "page:guide.md@guide.md:1",
+      "target": "tag:guide",
+      "kind": "tagged",
+      "resolution": "exact"
+    },
+    {
+      "source": "page:index.md@index.md:1",
+      "target": "heading:index.md#getting-started-1@index.md:21",
+      "kind": "defines",
+      "resolution": "exact"
+    },
+    {
+      "source": "page:index.md@index.md:1",
+      "target": "heading:index.md#getting-started@index.md:16",
+      "kind": "defines",
+      "resolution": "exact"
+    },
+    {
+      "source": "page:index.md@index.md:1",
+      "target": "heading:index.md#knowledge-base@index.md:8",
+      "kind": "defines",
+      "resolution": "exact"
+    },
+    {
+      "source": "page:index.md@index.md:1",
+      "target": "page:guide.md@guide.md:1",
+      "kind": "links_to",
+      "resolution": "exact"
+    },
+    {
+      "source": "page:index.md@index.md:1",
+      "target": "page:reference-notes.md@reference-notes.md:1",
+      "kind": "links_to",
+      "resolution": "exact"
+    },
+    {
+      "source": "page:index.md@index.md:1",
+      "target": "tag:architecture",
+      "kind": "tagged",
+      "resolution": "exact"
+    },
+    {
+      "source": "page:index.md@index.md:1",
+      "target": "tag:knowledge-base",
+      "kind": "tagged",
+      "resolution": "exact"
+    },
+    {
+      "source": "page:index.md@index.md:1",
+      "target": "tag:overview",
+      "kind": "tagged",
+      "resolution": "exact"
+    },
+    {
+      "source": "page:orphan.md@orphan.md:1",
+      "target": "heading:orphan.md#orphan@orphan.md:1",
+      "kind": "defines",
+      "resolution": "exact"
+    },
+    {
+      "source": "page:orphan.md@orphan.md:1",
+      "target": "page:index.md@index.md:1",
+      "kind": "links_to",
+      "resolution": "exact"
+    },
+    {
+      "source": "page:orphan.md@orphan.md:1",
+      "target": "tag:orphan",
+      "kind": "tagged",
+      "resolution": "exact"
+    },
+    {
+      "source": "page:reference-notes.md@reference-notes.md:1",
+      "target": "heading:reference-notes.md#reference-notes@reference-notes.md:1",
+      "kind": "defines",
+      "resolution": "exact"
+    },
+    {
+      "source": "page:reference-notes.md@reference-notes.md:1",
+      "target": "page:guide.md@guide.md:1",
+      "kind": "links_to",
+      "resolution": "exact"
+    },
+    {
+      "source": "page:reference-notes.md@reference-notes.md:1",
+      "target": "page:index.md@index.md:1",
+      "kind": "links_to",
+      "resolution": "exact"
+    },
+    {
+      "source": "page:reference-notes.md@reference-notes.md:1",
+      "target": "tag:architecture",
+      "kind": "tagged",
+      "resolution": "exact"
+    }
+  ]
+}
