@@ -18,38 +18,54 @@ cross-file pass that binds every unresolved edge to a real node by building a
 symbol table and matching targets against it). Extraction is linear in the
 number of files and stays cheap. Resolution is where scale is won or lost.
 
-__The trap: direct per-edge resolution is O(nodes × edges).__ Resolving each
-edge by scanning or re-deriving the candidate node set per edge means the work
-grows with the product of the two tables. On small inputs this is invisible; on
-a large tree it dominates and then explodes. Measured on this package's own
-walk:
+A full index of a 2,768-file repository (`io2e-hermione-edge`) originally did not
+finish in over five minutes. Bisecting the pipeline by phase found that neither
+the walk nor the parse was the problem — and the cause was not one thing but
+three, each masked by the next:
 
 ```text
-178 files   ->  2,329 nodes,  3,176 edges  ->  1.5 s
-211 files   ->  1,992 nodes,  6,919 edges  ->  1.9 s
-2,768 files (one repo)                      ->  did not finish in 6.5 minutes
-~8,200 files (full tree)                    ->  did not finish in 10 minutes
+phase        measured on the full 2,768-file repo
+-----        -------------------------------------
+walk+extract 13 s           (linear, fine)
+resolve      1.9 s          BUT exploded 166k edges -> 598k
+write        ~236 s (hang)  600k edges inserted one row at a time
 ```
 
-The jump from ~2 seconds at a few hundred files to "does not finish" at a few
-thousand is the signature of super-linear growth, not a constant-factor
-slowdown. The parse step is not the problem — it is the per-edge binding work.
+__Cause 1 — a per-edge full-table scan in the scoped suffix fallback.__ The main
+resolution loop was already dict-indexed, but the fallback that matches a bare
+name to any symbol with the same final dotted segment scanned the entire symbol
+table once per edge — O(scoped_edges × distinct_qualified_names). __Fix:__
+precompute an index keyed by last dotted segment, turning the scan into an O(1)
+lookup. Resolution dropped to ~2 s.
 
-__The fix: resolve with set-based SQL over indexed columns.__ Load the nodes and
-the unresolved edges into DuckDB, then bind edges with a small number of SQL
-statements — one join per edge *kind* against an indexed symbol table (keyed by
-qualified name, by module, by title/slug for Markdown) — rather than a Python
-loop that touches the candidate set once per edge. Each statement is a hash join
-the engine runs in roughly O(nodes + edges); the whole resolution becomes a
-handful of set operations instead of a quadratic sweep. The rows written are
-identical — this is a performance refactor of *how* edges are bound, not a
-change to *what* the graph contains.
+__Cause 2 — a fan-out explosion of best-effort edges.__ Resolution then finished
+fast but emitted 598k edges from 166k inputs — 92% of them `best_effort`. A
+common bare name (`run`, `handler`, `__init__`) shares its last segment with
+symbols in dozens or hundreds of unrelated modules, and binding to all of them
+fabricated a near-complete bipartite blow-up that is noise, not a dependency
+signal. The measured fan-out distribution: 2,292 edges each matched >100
+symbols, accounting for most of the blow-up. __Fix:__ cap the suffix fan-out —
+when a bare-name match binds to more than a threshold of distinct symbols, treat
+it as unresolvable and drop the edge. The cap must clear legitimate
+moderate-fan-in symbols (a class imported by a handful of modules sits around
+6); a threshold of 20 collapses the pathological tail while preserving those.
+Edges fell from 598k to ~98k.
 
-__Rule of thumb.__ Resolution cost must scale with `nodes + edges`, never with
-`nodes × edges`. "One SQL statement per edge kind" is the shape that holds; "one
-Python pass per edge" is the shape that fails. Separating the node insert and
-the edge resolve into distinct, indexed SQL steps is what lets a real codebase
-of thousands of files index in seconds rather than never finishing.
+__Cause 3 — row-by-row inserts.__ Even the legitimate edge set was written with
+one `execute` per row — one round-trip to DuckDB per edge. At 600k edges this
+alone extrapolated to ~236 s; `executemany` bulk inserts the same rows far
+faster. __Fix:__ bulk-insert nodes and edges with `executemany` (guarded for the
+empty-index case, which `executemany` rejects).
+
+With all three fixes the same repository indexes in __~65 s__ (13 s extract,
+fast resolve, bulk write of ~98k edges) instead of never finishing.
+
+__Rules of thumb.__ (1) Resolution cost must scale with `nodes + edges`, never
+`nodes × edges` — index the fallback, do not scan it. (2) A best-effort match
+that fans out to many candidates is noise; cap it rather than fabricate a dense
+sub-graph. (3) Persist in bulk (`executemany`/`INSERT ... SELECT`), never one
+round-trip per row. A single slow phase can hide behind another, so bisect by
+phase before optimizing.
 
 ## Graph traversal at scale: recursive SQL or DuckPGQ {#graph-traversal}
 

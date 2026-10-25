@@ -38,6 +38,14 @@ logger = logging.getLogger(__name__)
 _IMPORT_KINDS = ("imports",)
 _SCOPED_KINDS = ("inherits", "calls", "references")
 
+# Maximum number of in-set symbols a bare-name suffix match may bind to before
+# the scoped edge is treated as unresolvable noise and dropped. A common method
+# or function name (``run``, ``handler``, ``__init__``) shares its last segment
+# with symbols in many unrelated modules; binding to all of them fabricates a
+# dense best_effort fan-out that is noise and does not scale. Above this cap the
+# suffix match carries no useful dependency signal, so the edge is dropped.
+_SUFFIX_FANOUT_CAP = 20
+
 # The fixed extension order the JS/TS specifier resolver tries (NFR 2).
 _JS_TS_EXTENSIONS = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
 _JS_TS_LANGUAGES = frozenset({"javascript", "typescript"})
@@ -152,6 +160,16 @@ def resolve_edges(nodes: list[Node], edges: list[Edge]) -> list[Edge]:
             if node.language in _JS_TS_LANGUAGES:
                 js_ts_modules[node.qualified_name] = node.node_id
 
+    # Index node ids by the LAST dotted segment of their qualified_name, so the
+    # scoped suffix fallback (:func:`_resolve_scoped`) is an O(1) lookup instead
+    # of a full ``by_qn`` scan per edge (the O(scoped_edges × distinct_qns)
+    # hotspot). Built from ``by_qn`` in its insertion order, appending each qn's
+    # ids in order, so the resulting lists are byte-identical to the old
+    # comprehension ``[nid for qn, nids in by_qn.items() ... if last == raw]``.
+    by_last_segment: dict[str, list[str]] = {}
+    for qn, nids in by_qn.items():
+        by_last_segment.setdefault(qn.rsplit(".", 1)[-1], []).extend(nids)
+
     # Seed half of by_local (fix 1): PURE STRING TEST. A class/function node
     # whose qualified_name == f"{m_qn}.{name}" is a module-top-level define
     # (its module qn is the immediate dotted prefix, no intervening scope
@@ -210,7 +228,7 @@ def resolve_edges(nodes: list[Node], edges: list[Edge]) -> list[Edge]:
         raw = _raw_target(edge.dst_id)
         is_js_ts = src is not None and src.language in _JS_TS_LANGUAGES
         for dst_id, resolution in _resolve_scoped(
-            edge.kind, raw, module_qn, by_local, by_qn, is_js_ts
+            edge.kind, raw, module_qn, by_local, by_last_segment, is_js_ts
         ):
             resolved.append(_bind(edge, dst_id, resolution))
 
@@ -434,15 +452,19 @@ def _resolve_scoped(
     raw: str,
     module_qn: str | None,
     by_local: dict[tuple[str, str], list[str]],
-    by_qn: dict[str, list[str]],
+    by_last_segment: dict[str, list[str]],
     is_js_ts: bool,
 ) -> list[tuple[str, str]]:
     """Resolve an inherits/calls/references edge to ``(dst_id, resolution)``.
 
     Bare name -> ``by_local[(module, name)]`` (exact on a single hit, else
-    best_effort). Attribute tail / suffix -> ``by_qn`` suffix match, always
+    best_effort). Attribute tail / suffix -> last-segment match, always
     best_effort (fix 5). Zero in-set nodes -> empty (the edge is dropped). Every
     JS/TS edge is best_effort.
+
+    ``by_last_segment`` maps each qualified_name's final dotted segment to the
+    node ids (in ``by_qn`` insertion order), so the suffix fallback is an O(1)
+    lookup yielding the same ids, in the same order, as the former full scan.
     """
     if module_qn is not None:
         local = by_local.get((module_qn, raw))
@@ -451,10 +473,15 @@ def _resolve_scoped(
                 return [(local[0], "exact")]
             return [(nid, "best_effort") for nid in local]
     # Suffix match on the tail: every qualified_name whose last segment == raw.
-    suffix_hits = [
-        nid for qn, nids in by_qn.items() for nid in nids if qn.split(".")[-1] == raw
-    ]
-    if suffix_hits:
+    # A bare common name (e.g. ``run``, ``handler``, ``__init__``) can share its
+    # last segment with symbols across many unrelated modules; binding to all of
+    # them fabricates a near-complete bipartite blow-up of best_effort edges that
+    # is noise, not a dependency signal, and does not scale (it quadrupled the
+    # edge count on a mid-size repo). When the suffix matches more than
+    # ``_SUFFIX_FANOUT_CAP`` distinct in-set symbols, treat it as unresolvable
+    # and drop the edge rather than inventing a dense fan-out.
+    suffix_hits = by_last_segment.get(raw)
+    if suffix_hits and len(suffix_hits) <= _SUFFIX_FANOUT_CAP:
         return [(nid, "best_effort") for nid in suffix_hits]
     return []
 
@@ -869,13 +896,18 @@ def _write(
     rebuild it. Keep it, it is not dead.
     """
     con = store._con
-    for path, language, etag in file_rows:
-        con.execute(
+    # Bulk-insert with executemany rather than a per-row execute loop: at scale
+    # (tens of thousands of nodes, hundreds of thousands of edges) one round-trip
+    # per row is the dominant cost and does not finish in reasonable time.
+    # DuckDB's executemany rejects an empty parameter list, so each insert is
+    # guarded for the empty-index case.
+    if file_rows:
+        con.executemany(
             "INSERT INTO files (path, language, etag, stamped_at) VALUES (?, ?, ?, ?)",
-            [path, language, etag, build_stamp],
+            [(p, lang, etag, build_stamp) for p, lang, etag in file_rows],
         )
-    for node in nodes:
-        con.execute(
+    if nodes:
+        con.executemany(
             """
             INSERT INTO nodes
                 (node_id, kind, name, qualified_name, path,
@@ -883,21 +915,24 @@ def _write(
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
-                node.node_id,
-                node.kind,
-                node.name,
-                node.qualified_name,
-                node.path,
-                node.start_line,
-                node.end_line,
-                node.language,
+                (
+                    node.node_id,
+                    node.kind,
+                    node.name,
+                    node.qualified_name,
+                    node.path,
+                    node.start_line,
+                    node.end_line,
+                    node.language,
+                )
+                for node in nodes
             ],
         )
-    for edge in edges:
-        con.execute(
+    if edges:
+        con.executemany(
             "INSERT INTO edges (src_id, dst_id, kind, path, resolution) "
             "VALUES (?, ?, ?, ?, ?)",
-            [edge.src_id, edge.dst_id, edge.kind, edge.path, edge.resolution],
+            [(e.src_id, e.dst_id, e.kind, e.path, e.resolution) for e in edges],
         )
     con.execute(
         "INSERT INTO meta (key, value) VALUES (?, ?)",
