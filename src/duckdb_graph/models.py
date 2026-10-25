@@ -137,6 +137,8 @@ class Report(BaseModel):
     nodes_by_kind: dict[str, int]
     edges_by_kind: dict[str, int]
     roots: list[str]
+    branch: str | None = None
+    head_commit: str | None = None
 
 
 class GraphExportNode(BaseModel):

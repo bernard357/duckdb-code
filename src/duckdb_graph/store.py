@@ -588,6 +588,8 @@ class GraphStore:
             nodes_by_kind=nodes_by_kind,
             edges_by_kind=edges_by_kind,
             roots=roots,
+            branch=meta.get("branch"),
+            head_commit=meta.get("head_commit"),
         )
 
     def export(self) -> GraphExport:

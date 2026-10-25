@@ -907,6 +907,67 @@ def _write(
         "INSERT INTO meta (key, value) VALUES (?, ?)",
         ["root", str(folder)],
     )
+    branch, head_commit = _git_revision(folder)
+    if branch is not None:
+        con.execute("INSERT INTO meta (key, value) VALUES (?, ?)", ["branch", branch])
+    if head_commit is not None:
+        con.execute(
+            "INSERT INTO meta (key, value) VALUES (?, ?)",
+            ["head_commit", head_commit],
+        )
+
+
+def _git_revision(folder: Path) -> tuple[str | None, str | None]:
+    """Return ``(branch, head_commit)`` for ``folder``, or ``(None, None)``.
+
+    Reads ``.git/HEAD`` and the referenced ref file directly — no ``git``
+    subprocess — so it works wherever the folder lives and never requires git to
+    be installed. A non-git folder, a detached HEAD, or an unreadable ref
+    degrades to ``None`` for the missing part rather than raising, so indexing a
+    plain directory is unaffected. Walks up from ``folder`` to find the
+    enclosing ``.git`` (the indexed folder may be a subdirectory of the repo).
+    """
+    git_dir = _find_git_dir(folder)
+    if git_dir is None:
+        return (None, None)
+    try:
+        head = (git_dir / "HEAD").read_text(encoding="utf-8").strip()
+    except OSError:
+        return (None, None)
+    if head.startswith("ref:"):
+        ref = head[4:].strip()  # e.g. "refs/heads/main"
+        branch = ref.rsplit("/", 1)[-1] if "/" in ref else ref
+        commit = _read_git_ref(git_dir, ref)
+        return (branch, commit)
+    # Detached HEAD: the file holds the commit sha directly; no branch.
+    return (None, head or None)
+
+
+def _find_git_dir(folder: Path) -> Path | None:
+    """Return the enclosing ``.git`` directory, walking up, or ``None``."""
+    current = folder.resolve()
+    for candidate in (current, *current.parents):
+        git = candidate / ".git"
+        if git.is_dir():
+            return git
+    return None
+
+
+def _read_git_ref(git_dir: Path, ref: str) -> str | None:
+    """Resolve a ref to its commit sha via the loose ref file or packed-refs."""
+    loose = git_dir / ref
+    try:
+        return loose.read_text(encoding="utf-8").strip()
+    except OSError:
+        pass
+    packed = git_dir / "packed-refs"
+    try:
+        for line in packed.read_text(encoding="utf-8").splitlines():
+            if line and not line.startswith(("#", "^")) and line.endswith(ref):
+                return line.split(" ", 1)[0]
+    except OSError:
+        pass
+    return None
 
 
 def _rebuild_file(

@@ -266,13 +266,20 @@ Palette (or bind a key):
 }
 ```
 
-__A git hook.__ Re-index after each commit or merge — add to
-`.git/hooks/post-commit` (and `post-merge`), and make it executable:
+__A git hook.__ Re-index after each commit, merge, or branch switch — add to
+`.git/hooks/post-commit`, `post-merge`, and `post-checkout`, and make them
+executable:
 
 ```shell
 #!/bin/sh
 duckdb-graph index . --db .duckdb-graph/graph.duckdb
 ```
+
+Branch switches are handled either way: `index` records the current branch and
+HEAD commit in the database (visible in `duckdb-graph report` as a `Branch`
+line), and the incremental re-index reconciles the files that differ between
+branches — so after `git checkout` a re-index (manual, watched, or via the
+`post-checkout` hook above) brings the graph to the new branch's state.
 
 ## Troubleshooting {#troubleshooting}
 

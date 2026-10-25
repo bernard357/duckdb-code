@@ -94,6 +94,8 @@ def test_report_tool_returns_one_report(indexed_db):
         "nodes_by_kind",
         "edges_by_kind",
         "roots",
+        "branch",
+        "head_commit",
     }
     assert payload["languages"] == ["python", "typescript"]
     assert payload["files_by_language"] == {"python": 5, "typescript": 2}

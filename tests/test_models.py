@@ -176,8 +176,13 @@ def test_report_fields():
         "nodes_by_kind",
         "edges_by_kind",
         "roots",
+        "branch",
+        "head_commit",
     }
     assert report.schema_version == 1
+    # branch/head_commit default to None when not set.
+    assert report.branch is None
+    assert report.head_commit is None
 
 
 def test_impact_node_resolution_docstring_states_seed_origin():

@@ -67,7 +67,8 @@ Four read operations answer the structural questions:
   `defines`, its fan-in (what depends on it) and fan-out (what it depends on),
   and — for a class — its bases and subclasses.
 - __`report()`__ — introspects the index: database path, schema version,
-  languages, roots, and node/edge counts by kind.
+  languages, roots, node/edge counts by kind, and — when the indexed folder is
+  a git repository — the branch and HEAD commit the index was built from.
 
 The same four verbs answer Markdown knowledge-graph questions: `impact` on a
 page is "what links here", `explain` on a page is its inbound/outbound links and

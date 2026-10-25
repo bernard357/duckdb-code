@@ -184,6 +184,9 @@ def report(
         typer.echo(f"Database      : {result.db_path}")
         typer.echo(f"Schema version: {result.schema_version}")
         typer.echo(f"Roots         : {', '.join(result.roots)}")
+        if result.branch is not None:
+            head = f" @ {result.head_commit[:10]}" if result.head_commit else ""
+            typer.echo(f"Branch        : {result.branch}{head}")
         typer.echo(f"Languages     : {', '.join(result.languages)}")
         for language, count in result.files_by_language.items():
             typer.echo(f"  {language}: {count} files")
