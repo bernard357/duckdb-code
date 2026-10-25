@@ -198,3 +198,35 @@ def test_mcp_default_dispatches_to_run_stdio(monkeypatch):
     result = runner.invoke(app, ["mcp"])
     assert result.exit_code == 0, result.output
     assert calls == {"stdio": 1}
+
+
+def test_version_flag_prints_metadata_version():
+    """`--version` exits 0 with the installed version, not the no-args help."""
+    from importlib.metadata import version
+
+    result = runner.invoke(app, ["--version"])
+    assert result.exit_code == 0
+    printed = result.stdout.strip()
+    assert printed, "no version printed"
+    assert printed == version("duckdb-graph")
+    # It printed the version, not the help screen that no_args_is_help shows.
+    assert "Usage:" not in result.stdout
+
+
+def test_version_falls_back_to_sentinel(monkeypatch):
+    """A missing distribution degrades to the sentinel, never a traceback."""
+    import duckdb_graph
+    import duckdb_graph.cli as cli_module
+
+    monkeypatch.setattr(cli_module, "__version__", "0.0.0+unknown")
+    result = runner.invoke(app, ["--version"])
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "0.0.0+unknown"
+    # Sanity: the resolver itself yields the sentinel on PackageNotFoundError.
+    from importlib.metadata import PackageNotFoundError
+
+    def _raise(_name):
+        raise PackageNotFoundError
+
+    monkeypatch.setattr("duckdb_graph.version", _raise)
+    assert duckdb_graph._resolve_version() == "0.0.0+unknown"

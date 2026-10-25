@@ -5,6 +5,8 @@ tree-sitter-extracted code graph, with reverse-dependency impact analysis and
 structure explanation. One DuckDB file is one index.
 """
 
+from importlib.metadata import PackageNotFoundError, version
+
 from duckdb_graph.config import Settings
 from duckdb_graph.etag import compute_etag
 from duckdb_graph.extractors.base import Extraction, Extractor
@@ -56,4 +58,25 @@ __all__ = [
     "index_folder",
     "register_extractor",
     "resolve_extractor",
+    "__version__",
 ]
+
+
+def _resolve_version() -> str:
+    """Return the installed distribution version, or a sentinel if absent.
+
+    The version is baked in at build time by ``hatch-vcs`` from the most recent
+    git tag (a tagged build reports that tag; an untagged working build reports
+    a ``0.1.devN+g<commit>`` suffix). Reading the installed metadata — rather
+    than shelling out to ``git`` — is what lets ``--version`` work from a
+    pip/uvx install that has no git repository. Running from an uninstalled
+    source tree raises :class:`PackageNotFoundError`, which degrades to a clear
+    sentinel so ``--version`` never crashes.
+    """
+    try:
+        return version("duckdb-graph")
+    except PackageNotFoundError:
+        return "0.0.0+unknown"
+
+
+__version__ = _resolve_version()

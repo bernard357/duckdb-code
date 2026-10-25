@@ -12,6 +12,7 @@ from pathlib import Path
 
 import typer
 
+from duckdb_graph import __version__
 from duckdb_graph.indexer import index_folder
 from duckdb_graph.store import GraphStore
 
@@ -20,6 +21,30 @@ app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
 )
+
+
+def _version_callback(value: bool) -> None:
+    """Print the package version and exit, when ``--version`` is passed.
+
+    Eager so it fires before ``no_args_is_help`` handling: ``duckdb-graph
+    --version`` prints the version and exits 0 without requiring a subcommand.
+    """
+    if value:
+        typer.echo(__version__)
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        help="Show the package version and exit.",
+        is_eager=True,
+        callback=_version_callback,
+    ),
+) -> None:
+    """duckdb-graph command-line interface."""
 
 
 @app.command()

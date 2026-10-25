@@ -59,6 +59,7 @@ store.index("./my-project", rebuild=True)  # force a full rebuild
 ## Indexing from the CLI
 
 ```shell
+$ duckdb-graph --version                               # print the version and exit
 $ duckdb-graph index ./my-project --db graph.duckdb   # incremental by default
 $ duckdb-graph index ./my-project --db graph.duckdb --rebuild  # full rebuild
 ```
