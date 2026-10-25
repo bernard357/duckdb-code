@@ -48,6 +48,7 @@ export default withMermaid(
             { text: 'Examples', link: '/examples' },
             { text: 'Graph viewer', link: '/graph-viewer-guide' },
             { text: 'Developer workbook', link: '/developer-workbook' },
+            { text: 'Performance workbook', link: '/performance-workbook' },
             {
               text: 'Foster adoption',
               link: '/register-package-procedure',
