@@ -744,7 +744,7 @@ def _build_ignore_spec(folder: Path) -> "pathspec.PathSpec | None":
 
     Reads ``<folder>/.gitignore`` and ``<folder>/.duckdbgraphignore`` when
     present (each optional; a missing file contributes no patterns), concatenates
-    their lines, and returns a ``gitwildmatch`` :class:`pathspec.PathSpec`
+    their lines, and returns a ``gitignore`` :class:`pathspec.PathSpec`
     applied relative to ``folder``. Returns ``None`` when neither file exists or
     they yield no patterns, so the walk skips the matcher entirely. ``pathspec``
     is imported lazily so a folder with no ignore file pays no import cost.
@@ -764,14 +764,14 @@ def _build_ignore_spec(folder: Path) -> "pathspec.PathSpec | None":
 
     import pathspec
 
-    spec = pathspec.PathSpec.from_lines("gitwildmatch", lines)
+    spec = pathspec.PathSpec.from_lines("gitignore", lines)
     return spec if spec.patterns else None
 
 
 def _dir_is_ignored(rel: str, ignore_spec: "pathspec.PathSpec | None") -> bool:
     """Return ``True`` when the folder-relative dir path matches the spec.
 
-    gitwildmatch matches files, so a directory is tested both as ``rel`` and as
+    gitignore matches files, so a directory is tested both as ``rel`` and as
     ``rel + "/"`` to cover both ``dir`` and ``dir/`` ignore patterns.
     """
     if ignore_spec is None:
