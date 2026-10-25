@@ -43,21 +43,21 @@ def _result(db, name, args):
     return json.loads(outcome.content[0].text)
 
 
-def test_exactly_three_tools_registered(indexed_db):
+def test_exactly_four_tools_registered(indexed_db):
     server = _server(indexed_db)
     names = {tool.name for tool in asyncio.run(server.list_tools())}
-    assert names == {"impact", "explain", "report"}
+    assert names == {"impact", "explain", "report", "export"}
 
 
-def test_streamable_http_app_carries_the_three_tools(indexed_db):
+def test_streamable_http_app_carries_the_tools(indexed_db):
     # HTTP wiring: the same build_server produces a Starlette app over the
-    # Streamable HTTP transport, with the identical three read-only tools and
+    # Streamable HTTP transport, with the identical read-only tools and
     # no network listener bound.
     server = _server(indexed_db)
     app = server.streamable_http_app()
     assert isinstance(app, Starlette)
     names = {tool.name for tool in asyncio.run(server.list_tools())}
-    assert names == {"impact", "explain", "report"}
+    assert names == {"impact", "explain", "report", "export"}
 
 
 def test_impact_tool_returns_one_impact_result(indexed_db):
@@ -99,3 +99,45 @@ def test_report_tool_returns_one_report(indexed_db):
     }
     assert payload["languages"] == ["python", "typescript"]
     assert payload["files_by_language"] == {"python": 5, "typescript": 2}
+
+
+def test_export_tool_writes_path_by_default(indexed_db, tmp_path):
+    out = str(tmp_path / "graph.json")
+    payload = _result(indexed_db, "export", {"out": out})
+    # Default: a summary with the path and counts, NOT the inline graph.
+    assert payload["path"] == out
+    assert "graph" not in payload
+    assert payload["node_count"] > 0
+    assert payload["edge_count"] > 0
+    assert set(payload["meta"]) >= {"db_path", "languages", "nodes_by_kind"}
+    # The written file is a valid {meta, nodes, edges} document whose edge
+    # source/target reference real node ids.
+    doc = json.loads(Path(out).read_text())
+    assert set(doc) >= {"meta", "nodes", "edges"}
+    ids = {n["id"] for n in doc["nodes"]}
+    assert doc["edges"], "fixture should have edges"
+    for edge in doc["edges"]:
+        assert edge["source"] in ids
+        assert edge["target"] in ids
+
+
+def test_export_tool_inlines_a_small_graph(indexed_db):
+    # The sample fixture is small (well under the inline cap), so inline=True
+    # returns the graph directly.
+    payload = _result(indexed_db, "export", {"inline": True})
+    assert "graph" in payload
+    assert set(payload["graph"]) >= {"meta", "nodes", "edges"}
+    assert payload["node_count"] == len(payload["graph"]["nodes"])
+
+
+def test_export_tool_inline_cap_falls_back_to_path(indexed_db, monkeypatch):
+    # Force the inline cap below the fixture size: inline=True must fall back to
+    # a path handoff with an explanatory note, never dumping an oversized blob.
+    import duckdb_graph.mcp_server as mcp_mod
+
+    monkeypatch.setattr(mcp_mod, "_INLINE_ELEMENT_CAP", 1)
+    payload = _result(indexed_db, "export", {"inline": True})
+    assert "graph" not in payload
+    assert "path" in payload
+    assert "note" in payload
+    assert Path(payload["path"]).exists()

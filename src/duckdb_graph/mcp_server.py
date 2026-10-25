@@ -17,10 +17,20 @@ bare ``Explanation`` and never a list — so a consuming agent parses one stable
 shape per tool.
 """
 
+import os
+import tempfile
+from pathlib import Path
+
 from mcp.server.mcpserver import MCPServer
 
 from duckdb_graph.config import Settings
 from duckdb_graph.store import GraphStore
+
+# Inline JSON is only returned when the graph is at or under this node+edge
+# count. A full index runs to ~100k edges / tens of MB of JSON — far past what
+# an MCP tool response should carry inline — so the default is a path handoff
+# and inline is a bounded convenience for small graphs only.
+_INLINE_ELEMENT_CAP = 2000
 
 
 def build_server(settings: Settings | None = None) -> MCPServer:
@@ -60,6 +70,48 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             return store.report().model_dump()
         finally:
             store.close()
+
+    @server.tool()
+    def export(out: str | None = None, inline: bool = False) -> dict:
+        """Export the whole graph as JSON ({meta, nodes, edges}).
+
+        By default writes the JSON to a file and returns a small summary
+        ``{path, node_count, edge_count, meta}`` — NOT the graph inline, because
+        a full index is tens of megabytes, which an MCP response should not
+        carry. Pass ``out`` to choose the file path (otherwise a temp file is
+        written). Pass ``inline=True`` to get the JSON directly in ``graph``,
+        but only for a small graph (at or under the element cap); above the cap
+        it falls back to the path handoff and says so in ``note``.
+        """
+        store = GraphStore(settings=_read_only(resolved))
+        try:
+            result = store.export()
+        finally:
+            store.close()
+        node_count = len(result.nodes)
+        edge_count = len(result.edges)
+        summary: dict = {
+            "node_count": node_count,
+            "edge_count": edge_count,
+            "meta": result.meta.model_dump(),
+        }
+        if inline and node_count + edge_count <= _INLINE_ELEMENT_CAP:
+            summary["graph"] = result.model_dump()
+            return summary
+        if inline:
+            summary["note"] = (
+                f"graph has {node_count + edge_count} elements, over the "
+                f"{_INLINE_ELEMENT_CAP} inline cap; written to a file instead."
+            )
+        if out is not None:
+            path = Path(out)
+        else:
+            fd, tmp_name = tempfile.mkstemp(suffix=".json", prefix="duckdb-graph-")
+            os.close(fd)
+            path = Path(tmp_name)
+        path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
+        summary["path"] = str(path)
+        return summary
 
     return server
 

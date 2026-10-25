@@ -110,9 +110,15 @@ directory and size exclusions while still honoring the ignore files.
 
 ## The MCP server {#the-mcp-server}
 
-`duckdb-graph mcp` serves three read-only tools to any MCP client — `impact`,
-`explain`, and `report` — with the same JSON-object shapes as the SDK. It serves
-over two transports:
+`duckdb-graph mcp` serves four read-only tools to any MCP client — `impact`,
+`explain`, `report`, and `export` — with the same JSON-object shapes as the SDK.
+`export` returns the whole graph as JSON: by default it writes the
+`{meta, nodes, edges}` document to a file (given `out`, or a temp path) and
+returns a small `{path, node_count, edge_count, meta}` summary rather than the
+blob, because a full index is tens of megabytes — too large for an inline MCP
+response. Pass `inline=true` to get the graph directly, but only for a small
+graph (at or under an element cap); above the cap it falls back to the path
+handoff. It serves over two transports:
 
 ```shell
 $ duckdb-graph mcp                                   # stdio (default)
