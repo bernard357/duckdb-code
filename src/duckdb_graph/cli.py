@@ -59,17 +59,35 @@ def index(
         "--rebuild/--no-rebuild",
         help="Force a full rebuild instead of the default incremental re-index.",
     ),
+    no_default_ignores: bool = typer.Option(
+        False,
+        "--no-default-ignores",
+        help=(
+            "Disable the built-in dependency/build-dir and size exclusions; "
+            ".gitignore / .duckdbgraphignore are still honored."
+        ),
+    ),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
     """Index a folder of source code into the database.
 
     Incremental-by-default: a full rebuild runs when the database is empty or
     ``--rebuild`` is passed; otherwise only changed, added, and deleted files
-    are reconciled against the stored etags.
+    are reconciled against the stored etags. By default the indexer skips
+    ``.git``, dependency/build directories, files over 1 MB, and anything
+    matched by the folder's ``.gitignore`` / ``.duckdbgraphignore``; pass
+    ``--no-default-ignores`` to disable the built-in dir/size exclusions while
+    still honoring the ignore files.
     """
     store = GraphStore(db_path=db)
     try:
-        report = index_folder(store, folder, recursive=recursive, rebuild=rebuild)
+        report = index_folder(
+            store,
+            folder,
+            recursive=recursive,
+            rebuild=rebuild,
+            use_default_ignores=not no_default_ignores,
+        )
     finally:
         store.close()
     if as_json:

@@ -145,6 +145,7 @@ class GraphStore:
         *,
         recursive: bool = True,
         rebuild: bool = False,
+        use_default_ignores: bool = True,
     ) -> "IndexReport":
         """Index a folder of source code into this store.
 
@@ -154,11 +155,22 @@ class GraphStore:
         and the global cross-file resolution is re-run. Delegates to
         :func:`duckdb_graph.indexer.index_folder`; the import is lazy to
         avoid the store ↔ indexer import cycle.
+
+        ``use_default_ignores`` (default ``True``) prunes dependency/build
+        directories and files over the size cap; set it ``False`` to index those
+        too — the ``.gitignore`` / ``.duckdbgraphignore`` rules are still honored
+        either way.
         """
         self._guard_writable()
         from duckdb_graph.indexer import index_folder
 
-        return index_folder(self, folder, recursive=recursive, rebuild=rebuild)
+        return index_folder(
+            self,
+            folder,
+            recursive=recursive,
+            rebuild=rebuild,
+            use_default_ignores=use_default_ignores,
+        )
 
     def _ensure_schema(self) -> None:
         """Create the graph tables and the read-write indexes if absent."""

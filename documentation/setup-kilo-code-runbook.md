@@ -115,6 +115,19 @@ Keep the index out of version control:
 $ echo '.duckdb-graph/' >> .gitignore
 ```
 
+By default the indexer never walks the noise that should not be in a code
+graph, which is why the `.duckdb-graph/` database and the node/edge counts stay
+small even on a large repository. It skips the `.git` directory and the common
+dependency/build/cache directories (`node_modules`, `.venv`/`venv`, `vendor`,
+`dist`, `build`, `__pycache__`, `.mypy_cache`, `.pytest_cache`, `.ruff_cache`),
+files larger than 1 MB, and anything matched by the workspace `.gitignore` (or
+an optional `.duckdbgraphignore`). Those exclusions are counted in the report's
+`skipped` total. If you genuinely need a vendored tree in the graph, re-run with
+`--no-default-ignores` — the built-in directory and size exclusions are then
+off, but `.gitignore` / `.duckdbgraphignore` are still honored.
+
+The counts below are illustrative; your own numbers depend on the workspace.
+
 Verify the graph was built — non-zero node and edge counts across the languages
 present:
 
@@ -254,11 +267,15 @@ the `--db` path absolute. Confirm the same command runs in a terminal:
 `duckdb-graph mcp --db <abs-path> --transport stdio` should start without error
 (Ctrl-C to stop).
 
-__Empty or sparse graph.__ Either the indexed path was wrong, or the workspace
-is mostly in unsupported languages — only `.py`, `.pyi`, `.js`, `.jsx`, `.mjs`,
+__Empty or sparse graph.__ Either the indexed path was wrong, the workspace is
+mostly in unsupported languages — only `.py`, `.pyi`, `.js`, `.jsx`, `.mjs`,
 `.cjs`, `.ts`, `.tsx`, `.md`, `.markdown` are indexed; everything else is
-silently skipped. Check `duckdb-graph report --db <path>`: a high "skipped"
-count or a missing language explains a thin graph.
+silently skipped — or the source you expected is excluded by an ignore rule
+(a `.gitignore` entry, a dependency/build directory, or the 1 MB size cap).
+Check `duckdb-graph report --db <path>`: a high "skipped" count or a missing
+language explains a thin graph. If real source is being excluded, re-index with
+`--no-default-ignores` (which still honors `.gitignore`), or adjust the
+workspace `.gitignore` / `.duckdbgraphignore`.
 
 __Stale results.__ The agent sees the last indexed state. Re-run `duckdb-graph
 index` (stage 5) after changing files.

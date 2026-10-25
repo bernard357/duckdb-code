@@ -15,9 +15,14 @@ in isolation by the seam test.
 
 import datetime
 import logging
+import os
 from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    import pathspec
 
 from duckdb_graph.etag import compute_etag
 from duckdb_graph.extractors.base import Extraction
@@ -44,6 +49,34 @@ _MARKDOWN_TAG_KIND = "tagged"
 # The stored-path suffixes a Markdown link target may point at a page by.
 _MARKDOWN_EXTENSIONS = (".md", ".markdown")
 
+# Directories never descended into by default (pruned in place during the walk
+# by exact basename). The whole subtree is skipped, so nothing under them is
+# ever stat'd, read, or counted — a pruned tree contributes 0 to every counter.
+_DEFAULT_IGNORED_DIRS = frozenset(
+    {
+        ".git",
+        "node_modules",
+        ".venv",
+        "venv",
+        "vendor",
+        "dist",
+        "build",
+        "__pycache__",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+    }
+)
+
+# Files strictly larger than this (in bytes) are dropped by default. The bound
+# is exclusive: a file of exactly 1_000_000 bytes is KEPT; 1_000_001 is dropped.
+_DEFAULT_MAX_FILE_BYTES = 1_000_000
+
+# Optional per-folder ignore files, parsed (when present) with gitignore
+# semantics and applied relative to the indexed folder. A missing file is a
+# no-op (contributes no patterns).
+_IGNORE_FILES = (".gitignore", ".duckdbgraphignore")
+
 
 class IndexReport(BaseModel):
     """Outcome of an :func:`index_folder` run.
@@ -55,6 +88,15 @@ class IndexReport(BaseModel):
     ``rebuilt`` counts the files re-extracted and rewritten this run (0 on a
     no-change incremental run); ``deleted`` counts the files whose rows were
     dropped because they vanished from disk.
+
+    ``skipped`` is a single combined count of every file the walk encountered
+    but did not index: files of an unsupported extension, files dropped by an
+    ignore rule (over the size cap, or matched by ``.gitignore`` /
+    ``.duckdbgraphignore``), and unreadable files. Whole directories excluded by
+    default (``node_modules``, ``.venv``, ``.git``, build/cache dirs, etc.) are
+    PRUNED before descent, so the files inside them are never walked and
+    contribute 0 to ``skipped`` (and to every other counter) — only files the
+    walk actually reached and dropped are counted.
     """
 
     files: int = 0
@@ -478,6 +520,7 @@ def index_folder(
     recursive: bool = True,
     *,
     rebuild: bool = False,
+    use_default_ignores: bool = True,
 ) -> IndexReport:
     """Index every source file under ``folder`` into ``store``.
 
@@ -489,6 +532,11 @@ def index_folder(
     are recreated empty and ``meta`` cleared before the walk, so a full run over
     the same folder yields byte-identical rows. The incremental path leaves the
     database identical to a full rebuild of the same on-disk state.
+
+    ``use_default_ignores`` (default ``True``) controls the built-in directory
+    and size exclusions; when ``False`` those are disabled but the
+    ``.gitignore`` / ``.duckdbgraphignore`` rules are still honored. The flag is
+    threaded identically through the full and incremental paths.
     """
     folder = Path(folder)
     if not folder.is_dir():
@@ -497,26 +545,42 @@ def index_folder(
     store._guard_writable()
 
     if rebuild or not _db_is_populated(store):
-        return _full_index(store, folder, recursive)
-    return _incremental_index(store, folder, recursive)
+        return _full_index(
+            store, folder, recursive, use_default_ignores=use_default_ignores
+        )
+    return _incremental_index(
+        store, folder, recursive, use_default_ignores=use_default_ignores
+    )
 
 
 def _extract_folder(
-    folder: Path, recursive: bool
+    folder: Path, recursive: bool, *, use_default_ignores: bool = True
 ) -> tuple[list[tuple[str, str, str]], list[Node], list[Edge], dict[str, int], int]:
     """Walk ``folder`` and extract every indexable file (no DuckDB writes).
 
     Returns ``(file_rows, all_nodes, all_edges, languages, skipped)`` where
     ``file_rows`` is ``(rel_path, language, etag)`` per indexed file. Shared by
     the full-build and incremental paths so both see identical extraction.
+
+    The ignore spec (built once per run from the folder's ``.gitignore`` /
+    ``.duckdbgraphignore``) and the ``use_default_ignores`` flag prune the walk
+    in :func:`_iter_files`; the files that walk dropped are folded into
+    ``skipped`` alongside the unsupported-extension and unreadable skips.
     """
     file_rows: list[tuple[str, str, str]] = []
     all_nodes: list[Node] = []
     all_edges: list[Edge] = []
     languages: dict[str, int] = {}
-    skipped = 0
 
-    for abs_path in _iter_files(folder, recursive):
+    ignore_spec = _build_ignore_spec(folder)
+    paths, skipped = _iter_files(
+        folder,
+        recursive,
+        use_default_ignores=use_default_ignores,
+        ignore_spec=ignore_spec,
+    )
+
+    for abs_path in paths:
         rel = abs_path.relative_to(folder).as_posix()
         language = detect_language(rel)
         if language is None:
@@ -559,12 +623,18 @@ def _dedup_nodes(nodes: list[Node]) -> list[Node]:
     return unique
 
 
-def _full_index(store: GraphStore, folder: Path, recursive: bool) -> IndexReport:
+def _full_index(
+    store: GraphStore,
+    folder: Path,
+    recursive: bool,
+    *,
+    use_default_ignores: bool = True,
+) -> IndexReport:
     """Full rebuild: recreate the tables and rewrite the whole graph."""
     _recreate_tables(store)
     build_stamp = datetime.datetime.now(datetime.UTC)
     file_rows, all_nodes, all_edges, languages, skipped = _extract_folder(
-        folder, recursive
+        folder, recursive, use_default_ignores=use_default_ignores
     )
     resolved_edges = resolve_edges(all_nodes, all_edges)
     _write(store, file_rows, all_nodes, resolved_edges, build_stamp, folder)
@@ -586,7 +656,13 @@ def _db_is_populated(store: GraphStore) -> bool:
     return bool(row and row[0] > 0)
 
 
-def _incremental_index(store: GraphStore, folder: Path, recursive: bool) -> IndexReport:
+def _incremental_index(
+    store: GraphStore,
+    folder: Path,
+    recursive: bool,
+    *,
+    use_default_ignores: bool = True,
+) -> IndexReport:
     """Reconcile a populated database against the current on-disk folder.
 
     Compares each live file's freshly computed etag against its stored etag to
@@ -601,7 +677,7 @@ def _incremental_index(store: GraphStore, folder: Path, recursive: bool) -> Inde
     """
     stored = _stored_etags(store)
     file_rows, all_nodes, all_edges, languages, skipped = _extract_folder(
-        folder, recursive
+        folder, recursive, use_default_ignores=use_default_ignores
     )
     live = {path: etag for path, _language, etag in file_rows}
 
@@ -663,9 +739,103 @@ def _noop_report(store: GraphStore, skipped: int, *, mode: str) -> IndexReport:
     )
 
 
-def _iter_files(folder: Path, recursive: bool) -> list[Path]:
-    pattern = "**/*" if recursive else "*"
-    return sorted(p for p in folder.glob(pattern) if p.is_file())
+def _build_ignore_spec(folder: Path) -> "pathspec.PathSpec | None":
+    """Build a combined gitignore matcher from the folder's ignore files.
+
+    Reads ``<folder>/.gitignore`` and ``<folder>/.duckdbgraphignore`` when
+    present (each optional; a missing file contributes no patterns), concatenates
+    their lines, and returns a ``gitwildmatch`` :class:`pathspec.PathSpec`
+    applied relative to ``folder``. Returns ``None`` when neither file exists or
+    they yield no patterns, so the walk skips the matcher entirely. ``pathspec``
+    is imported lazily so a folder with no ignore file pays no import cost.
+    """
+    lines: list[str] = []
+    for name in _IGNORE_FILES:
+        ignore_file = folder / name
+        if not ignore_file.is_file():
+            continue
+        try:
+            lines.extend(ignore_file.read_text(encoding="utf-8").splitlines())
+        except OSError as exc:  # pragma: no cover - rare unreadable ignore file
+            logger.warning("skipping unreadable ignore file %s: %s", name, exc)
+
+    if not lines:
+        return None
+
+    import pathspec
+
+    spec = pathspec.PathSpec.from_lines("gitwildmatch", lines)
+    return spec if spec.patterns else None
+
+
+def _dir_is_ignored(rel: str, ignore_spec: "pathspec.PathSpec | None") -> bool:
+    """Return ``True`` when the folder-relative dir path matches the spec.
+
+    gitwildmatch matches files, so a directory is tested both as ``rel`` and as
+    ``rel + "/"`` to cover both ``dir`` and ``dir/`` ignore patterns.
+    """
+    if ignore_spec is None:
+        return False
+    return ignore_spec.match_file(rel) or ignore_spec.match_file(f"{rel}/")
+
+
+def _iter_files(
+    folder: Path,
+    recursive: bool,
+    *,
+    use_default_ignores: bool = True,
+    ignore_spec: "pathspec.PathSpec | None" = None,
+) -> tuple[list[Path], int]:
+    """Walk ``folder`` with directory pruning, returning kept files and a count.
+
+    Uses :func:`os.walk` so excluded directories are pruned in place
+    (``dirnames[:] = ...``) and never descended into — the files inside a pruned
+    tree are never stat'd, read, or counted. Returns ``(sorted_kept, excluded)``
+    where ``excluded`` counts only the files the walk actually reached and
+    dropped by the size cap or an ignore-file match (whole pruned trees
+    contribute 0).
+
+    When ``use_default_ignores`` is ``True`` (the default), the built-in
+    directory set (:data:`_DEFAULT_IGNORED_DIRS`) is pruned and files strictly
+    larger than :data:`_DEFAULT_MAX_FILE_BYTES` (1 MB; the bound is exclusive, so
+    a file of exactly 1_000_000 bytes is kept) are dropped. When ``False`` those
+    two rules are skipped, but ``ignore_spec`` (the ``.gitignore`` /
+    ``.duckdbgraphignore`` matcher) is still honored in both cases. When
+    ``recursive`` is ``False`` only the top folder's files are returned.
+    """
+    kept: list[Path] = []
+    excluded = 0
+
+    for dirpath, dirnames, filenames in os.walk(folder):
+        dir_rel = Path(dirpath).relative_to(folder)
+
+        pruned: list[str] = []
+        for name in dirnames:
+            if use_default_ignores and name in _DEFAULT_IGNORED_DIRS:
+                continue
+            child_rel = (dir_rel / name).as_posix()
+            if _dir_is_ignored(child_rel, ignore_spec):
+                continue
+            pruned.append(name)
+        dirnames[:] = pruned
+
+        for name in filenames:
+            path = Path(dirpath) / name
+            if not path.is_file():
+                continue
+            rel = (dir_rel / name).as_posix()
+            if ignore_spec is not None and ignore_spec.match_file(rel):
+                excluded += 1
+                continue
+            if use_default_ignores and path.stat().st_size > _DEFAULT_MAX_FILE_BYTES:
+                excluded += 1
+                continue
+            kept.append(path)
+
+        if not recursive:
+            dirnames[:] = []
+
+    return sorted(kept), excluded
 
 
 def _recreate_tables(store: GraphStore) -> None:

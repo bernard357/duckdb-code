@@ -84,10 +84,20 @@ variables and the `--db` override, and `--json` emits machine-readable output.
 ```shell
 $ duckdb-graph index ./my-project --db graph.duckdb   # incremental by default
 $ duckdb-graph index ./my-project --db graph.duckdb --rebuild
+$ duckdb-graph index ./my-project --db graph.duckdb --no-default-ignores
 $ duckdb-graph report --db graph.duckdb
 $ duckdb-graph impact index_folder --db graph.duckdb
 $ duckdb-graph explain GraphStore --db graph.duckdb
 ```
+
+By default `index` never descends into dependency or build trees: it skips the
+`.git` directory and the dependency/build/cache directories `node_modules`,
+`.venv`, `venv`, `vendor`, `dist`, `build`, `__pycache__`, `.mypy_cache`,
+`.pytest_cache`, and `.ruff_cache`; files larger than 1 MB (1,000,000 bytes —
+exactly that size is kept); and anything matched by the folder's `.gitignore`
+or an optional `.duckdbgraphignore` (gitignore syntax, relative to the folder;
+a missing file is a no-op). Pass `--no-default-ignores` to disable the built-in
+directory and size exclusions while still honoring the ignore files.
 
 ## The MCP server {#the-mcp-server}
 

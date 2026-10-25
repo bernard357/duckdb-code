@@ -68,6 +68,25 @@ The `index` verb is incremental-by-default: it runs a full build when the
 database is empty and reconciles only changed, added, and deleted files on a
 re-run. Pass `--rebuild` to force a full rebuild.
 
+By default the indexer skips the noise that should never be part of a code
+graph, so it never descends into dependency or build trees:
+
+- the `.git` directory and the common dependency/build/cache directories
+  `node_modules`, `.venv`, `venv`, `vendor`, `dist`, `build`, `__pycache__`,
+  `.mypy_cache`, `.pytest_cache`, and `.ruff_cache`;
+- files larger than 1 MB (1,000,000 bytes — a file of exactly that size is
+  kept);
+- anything matched by the indexed folder's `.gitignore` or an optional
+  `.duckdbgraphignore` (gitignore syntax, applied relative to the folder; a
+  missing file is a no-op).
+
+Pass `--no-default-ignores` (CLI) or `use_default_ignores=False` (SDK) to
+disable the built-in directory and size exclusions when you do want a vendored
+tree in the graph; the `.gitignore` / `.duckdbgraphignore` rules are still
+honored. Excluded files that the walk reaches (oversized or ignore-matched) are
+counted in the report's combined `skipped` total; whole pruned directories are
+never walked and so cost nothing.
+
 ## Indexing a folder of Markdown pages
 
 The same graph indexes a folder of Markdown pages, so a knowledge base of
