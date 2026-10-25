@@ -7,6 +7,7 @@ and ``--json`` forms against it. All offline and deterministic.
 import json
 from pathlib import Path
 
+import typer.main
 from typer.testing import CliRunner
 
 from duckdb_graph.cli import app
@@ -14,16 +15,32 @@ from duckdb_graph.cli import app
 runner = CliRunner()
 
 
-def _help(args: list[str]):
-    """Invoke the CLI for help output with a wide, fixed terminal width.
+def _click_command():
+    """Return the underlying Click command for the Typer app.
 
-    Click/Typer wrap the options panel to the terminal width, which splits long
-    option names across the box border on a narrow terminal (e.g. a CI runner).
-    Pinning COLUMNS keeps help output unwrapped so substring assertions on
-    option names are width-independent rather than passing only on a wide dev
-    terminal.
+    Help-output substring assertions are brittle: Click renders the options
+    panel inside a box wrapped to the terminal width, so a long option name can
+    be split across the border on a narrow or differently-sized terminal (this
+    broke CI across Python/terminal differences). Inspecting the command's
+    registered subcommands and parameters is rendering-, width-, and
+    version-independent, so these tests assert structure, not layout.
     """
-    return runner.invoke(app, args, env={"COLUMNS": "200"})
+    return typer.main.get_command(app)
+
+
+def _subcommand_names() -> set[str]:
+    group = _click_command()
+    return set(group.commands)  # type: ignore[attr-defined]
+
+
+def _option_names(verb: str) -> set[str]:
+    group = _click_command()
+    cmd = group.commands[verb]  # type: ignore[attr-defined]
+    names: set[str] = set()
+    for param in cmd.params:
+        names.update(param.opts)
+        names.update(param.secondary_opts)
+    return names
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample"
@@ -38,10 +55,9 @@ def _index(tmp_path) -> str:
 
 
 def test_help_lists_all_verbs():
-    result = _help(["--help"])
-    assert result.exit_code == 0, result.output
+    names = _subcommand_names()
     for verb in ("index", "watch", "report", "impact", "explain", "export", "mcp"):
-        assert verb in result.output
+        assert verb in names
 
 
 def test_index_json_returns_expected_counts(tmp_path):
@@ -130,9 +146,7 @@ def test_impact_depth_zero_has_no_affected(tmp_path):
 
 
 def test_index_help_lists_rebuild_flag():
-    result = _help(["index", "--help"])
-    assert result.exit_code == 0, result.output
-    assert "--rebuild" in result.output
+    assert "--rebuild" in _option_names("index")
 
 
 def test_index_rebuild_forces_full_and_plain_rerun_is_incremental(tmp_path):
@@ -174,10 +188,10 @@ def test_export_out_writes_json_file(tmp_path):
 
 
 def test_mcp_verb_is_wired():
-    # Smoke: the command exists and is listed; we do not start the stdio loop.
-    result = _help(["mcp", "--help"])
-    assert result.exit_code == 0, result.output
-    assert "stdio" in result.output.lower()
+    # Smoke: the command exists and exposes its transport option; we do not
+    # start the stdio loop.
+    assert "mcp" in _subcommand_names()
+    assert "--transport" in _option_names("mcp")
 
 
 def test_mcp_http_transport_dispatches_to_run_http(monkeypatch):
