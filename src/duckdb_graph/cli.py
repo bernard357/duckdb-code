@@ -13,7 +13,7 @@ from pathlib import Path
 import typer
 
 from duckdb_graph import __version__
-from duckdb_graph.indexer import index_folder
+from duckdb_graph.indexer import IndexReport, index_folder
 from duckdb_graph.store import GraphStore
 
 app = typer.Typer(
@@ -105,6 +105,66 @@ def index(
             f"({report.indexed} indexed, {report.skipped} skipped), "
             f"{report.nodes} nodes, {report.edges} edges."
         )
+
+
+@app.command()
+def watch(
+    folder: str = typer.Argument(..., help="Folder of source code to watch."),
+    db: str | None = typer.Option(None, "--db", help="DuckDB file path."),
+    recursive: bool = typer.Option(
+        True, "--recursive/--no-recursive", help="Recurse into sub-folders."
+    ),
+    no_default_ignores: bool = typer.Option(
+        False,
+        "--no-default-ignores",
+        help=(
+            "Disable the built-in dependency/build-dir and size exclusions; "
+            ".gitignore / .duckdbgraphignore are still honored."
+        ),
+    ),
+) -> None:
+    """Watch a folder and re-index incrementally when files change.
+
+    Runs until interrupted (Ctrl-C). On each batch of filesystem changes it
+    runs the incremental re-index, so the database — and any MCP server serving
+    it read-only — reflects the current source without a manual ``index`` run.
+    Changes under the default-ignored directories (``.git``, ``node_modules``,
+    ``.venv``, caches, …) never trigger a rebuild.
+    """
+    from duckdb_graph.watcher import watch as _watch
+
+    store = GraphStore(db_path=db)
+
+    def _report(report: IndexReport) -> None:
+        typer.echo(
+            f"Re-indexed: {report.rebuilt} rebuilt, {report.deleted} deleted, "
+            f"{report.nodes} nodes, {report.edges} edges."
+        )
+
+    # Build the index once up front so watching starts from a current graph.
+    initial = index_folder(
+        store,
+        folder,
+        recursive=recursive,
+        rebuild=False,
+        use_default_ignores=not no_default_ignores,
+    )
+    typer.echo(
+        f"Watching {folder} (initial: {initial.nodes} nodes, "
+        f"{initial.edges} edges). Press Ctrl-C to stop."
+    )
+    try:
+        _watch(
+            store,
+            folder,
+            recursive=recursive,
+            use_default_ignores=not no_default_ignores,
+            on_reindex=_report,
+        )
+    except KeyboardInterrupt:
+        typer.echo("Stopped.")
+    finally:
+        store.close()
 
 
 @app.command()

@@ -76,19 +76,27 @@ heading structure, and `report` surfaces the page/heading/tag counts. See the
 
 ## The CLI {#the-cli}
 
-The `duckdb-graph` CLI exposes six verbs: `index`, `report`, `impact`,
-`explain`, `export`, and `mcp`. Every serving verb opens the store read-only;
-only `index` opens it writable. All honor the `DUCKDB_GRAPH_*` environment
-variables and the `--db` override, and `--json` emits machine-readable output.
+The `duckdb-graph` CLI exposes seven verbs: `index`, `watch`, `report`,
+`impact`, `explain`, `export`, and `mcp`. Every serving verb opens the store
+read-only; `index` and `watch` open it writable. All honor the
+`DUCKDB_GRAPH_*` environment variables and the `--db` override, and `--json`
+emits machine-readable output.
 
 ```shell
 $ duckdb-graph index ./my-project --db graph.duckdb   # incremental by default
 $ duckdb-graph index ./my-project --db graph.duckdb --rebuild
 $ duckdb-graph index ./my-project --db graph.duckdb --no-default-ignores
+$ duckdb-graph watch ./my-project --db graph.duckdb   # re-index on file change
 $ duckdb-graph report --db graph.duckdb
 $ duckdb-graph impact index_folder --db graph.duckdb
 $ duckdb-graph explain GraphStore --db graph.duckdb
 ```
+
+`watch` runs until interrupted, re-indexing incrementally on every relevant
+file change (it respects the same ignore rules as `index`, so dependency-tree
+churn never triggers a rebuild). DuckDB is single-writer: run exactly one
+writer — one `index` or one `watch` — against a database file at a time; an
+`mcp` server reads the same file read-only alongside it.
 
 By default `index` never descends into dependency or build trees: it skips the
 `.git` directory and the dependency/build/cache directories `node_modules`,

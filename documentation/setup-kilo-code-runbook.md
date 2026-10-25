@@ -227,8 +227,27 @@ $ duckdb-graph index . --db .duckdb-graph/graph.duckdb
 Incremental: 1 rebuilt, 0 deleted, 31 files (14 indexed, 17 skipped), ...
 ```
 
-There is a staleness window between an edit and the next re-index — the server
-does not watch the filesystem. Two optional ways to automate the re-index:
+__Automatic: `duckdb-graph watch` (recommended).__ Run the watcher as a
+long-running process; it re-indexes incrementally on every relevant file change,
+so the index — and the MCP server reading it — stays current with no manual
+step:
+
+```shell
+$ duckdb-graph watch . --db .duckdb-graph/graph.duckdb
+Watching . (initial: 266 nodes, 741 edges). Press Ctrl-C to stop.
+Re-indexed: 1 rebuilt, 0 deleted, 267 nodes, 742 edges.
+```
+
+The watcher respects the same ignore rules as `index` — churn under
+`node_modules`, `.venv`, `.git`, and the caches never triggers a rebuild. Note
+DuckDB is single-writer: run exactly one writer (the watcher) against a given
+database file; the Kilo Code MCP server opens the same file read-only to serve
+queries. If you see a lock conflict, ensure only one `watch` process is running
+for that database. Run the watcher from a dedicated terminal or a VS Code task.
+
+If you prefer an explicit, on-demand refresh instead of a long-running watcher,
+there is a staleness window between an edit and the next manual re-index. Two
+ways to automate that refresh:
 
 __A VS Code task.__ Add to `.vscode/tasks.json`, then run it from the Command
 Palette (or bind a key):
