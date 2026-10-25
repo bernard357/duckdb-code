@@ -54,6 +54,15 @@ export default withMermaid(
             },
           ],
         },
+        {
+          text: 'Runbooks',
+          items: [
+            {
+              text: 'Kilo Code MCP setup',
+              link: '/setup-kilo-code-runbook',
+            },
+          ],
+        },
       ],
       search: {
         provider: 'local',
