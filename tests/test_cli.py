@@ -13,6 +13,19 @@ from duckdb_graph.cli import app
 
 runner = CliRunner()
 
+
+def _help(args: list[str]):
+    """Invoke the CLI for help output with a wide, fixed terminal width.
+
+    Click/Typer wrap the options panel to the terminal width, which splits long
+    option names across the box border on a narrow terminal (e.g. a CI runner).
+    Pinning COLUMNS keeps help output unwrapped so substring assertions on
+    option names are width-independent rather than passing only on a wide dev
+    terminal.
+    """
+    return runner.invoke(app, args, env={"COLUMNS": "200"})
+
+
 FIXTURE = Path(__file__).parent / "fixtures" / "sample"
 
 
@@ -25,9 +38,9 @@ def _index(tmp_path) -> str:
 
 
 def test_help_lists_all_verbs():
-    result = runner.invoke(app, ["--help"])
+    result = _help(["--help"])
     assert result.exit_code == 0, result.output
-    for verb in ("index", "report", "impact", "explain", "export", "mcp"):
+    for verb in ("index", "watch", "report", "impact", "explain", "export", "mcp"):
         assert verb in result.output
 
 
@@ -117,7 +130,7 @@ def test_impact_depth_zero_has_no_affected(tmp_path):
 
 
 def test_index_help_lists_rebuild_flag():
-    result = runner.invoke(app, ["index", "--help"])
+    result = _help(["index", "--help"])
     assert result.exit_code == 0, result.output
     assert "--rebuild" in result.output
 
@@ -162,7 +175,7 @@ def test_export_out_writes_json_file(tmp_path):
 
 def test_mcp_verb_is_wired():
     # Smoke: the command exists and is listed; we do not start the stdio loop.
-    result = runner.invoke(app, ["mcp", "--help"])
+    result = _help(["mcp", "--help"])
     assert result.exit_code == 0, result.output
     assert "stdio" in result.output.lower()
 
