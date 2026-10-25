@@ -63,6 +63,18 @@ $ make test      # run the test suite
 $ make lint      # ruff, mypy, markdownlint
 ```
 
+## For AI agents: how to implement changes
+
+Prefer implementing single-file or single-module changes inline — edit the
+files directly against the existing `.venv`, run `make lint` / `make test` /
+`make self-test` to verify, and commit. Reserve a full multi-step workflow
+(worktree, planner, implement-and-review loop) for multi-file or genuinely
+high-risk work (new architecture, cross-cutting refactors, schema or resolver
+changes). The verification gate is non-negotiable either way: never claim a
+change works without running the lint/test/self-test gate and, for a
+behavioral change, an end-to-end check. Flag when a task looks borderline so a
+reviewed workflow can be chosen deliberately.
+
 ## The Makefile is the toolbox
 
 Drive common tasks through `make`; do not call the underlying tools directly:
