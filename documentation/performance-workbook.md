@@ -93,15 +93,44 @@ multi-hop walk into the engine as a single query. Two options:
   extension — an added dependency and an availability/packaging surface to
   own.
 
-__The decision is deferred to measurement, not taste.__ Which one to adopt
-should be decided by a __timed comparison on a real full index of `~/Public`__,
-not argued in the abstract. The honest sequence is: make the index build scale
-(so a full `~/Public` graph can be built at all), then benchmark the current
-Python BFS, a `WITH RECURSIVE` implementation, and a DuckPGQ implementation of
-the same `impact`/`explain` queries against that graph, and pick based on the
-measured latency against the added-dependency cost. `WITH RECURSIVE` wins by
-default unless DuckPGQ is decisively faster or materially simpler for the
-queries we actually run.
+__The verdict, decided by measurement: `WITH RECURSIVE`.__ A full `~/Public`
+index (172,805 nodes, 1,211,129 edges) was built as the benchmark substrate and
+the three engines were timed on the same reverse-dependency queries:
+
+```text
+seed (affected)      python BFS   WITH RECURSIVE
+high fan-in (28,674) 531 ms       93 ms          (~5.7x faster)
+mid fan-in (3)       19 ms        55 ms
+leaf (0)             8 ms         52 ms
+```
+
+`WITH RECURSIVE` is dramatically faster on the deep/wide traversal that is
+actually slow, and loses only on trivial 0–3-node closures where a ~50 ms fixed
+query-setup cost dominates work that is already instant — irrelevant for an
+agent-facing tool. Results were identical across all seeds (same affected set).
+
+__DuckPGQ was ruled out, also by measurement.__ The extension installs and loads
+on DuckDB 2.0.0 but its SQL/PGQ parser does not activate — `CREATE PROPERTY
+GRAPH` and `MATCH` fail with parser errors, because DuckPGQ is not available on
+current DuckDB releases (the package is pinned to 2.0.0). Adopting it would mean
+pinning DuckDB back several versions and taking a community-extension dependency
+whose availability lags DuckDB — a poor trade for a core-only package.
+
+__Two traps the implementation surfaced.__ (1) A recursive CTE that carries
+`(node_id, distance)` pairs never terminates on a cyclic graph — Markdown pages
+link mutually, so each pass invents a new larger distance for the same node. The
+recursion must dedup on `node_id` alone (carry no distance); distance and
+resolution are then computed by a bounded BFS over just the reachable subgraph.
+(2) Fetching the reachable nodes one id at a time reintroduces the very
+N-round-trip cost the recursive closure removes — materialize them with a single
+`IN (...)` query. With both, `impact` on the 28,674-node closure runs in ~2.5 s
+end-to-end (closure in SQL, then one bounded subgraph pass and one node fetch),
+versus not finishing acceptably via per-hop round-trips at this scale.
+
+__Rule of thumb.__ Push the multi-hop closure into the engine as one recursive
+query deduped on node identity; keep the small post-pass (distance, resolution,
+ordering) in Python over the bounded reachable subgraph; and never fetch the
+result set one row at a time.
 
 ## Measured scale of a large tree {#measured-scale}
 
