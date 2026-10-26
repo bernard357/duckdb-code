@@ -2,14 +2,15 @@
 
 This module owns the authoritative schema DDL (:data:`SCHEMA_DDL` and
 :data:`INDEX_DDL`) so the indexer's table recreation and the store's
-``_ensure_schema`` can never drift. It also exposes the three read-only agentic
+``_ensure_schema`` can never drift. It also exposes the three query agentic
 tools over the graph: :meth:`GraphStore.impact` (transitive reverse
 dependencies), :meth:`GraphStore.explain` (one node's structural
 neighbourhood), and :meth:`GraphStore.report` (pure aggregation).
 
-The only DuckDB indexes are ordinary B-tree indexes on text/int columns plus
-the two primary keys (``files.path``, ``meta.key``); there is no experimental
-HNSW persistence, so a read-only open of a frozen file needs no special flag.
+The store always opens read-write: incremental updates are the rule for this
+package, so the file is opened writable and the schema is ensured on every
+open. The only DuckDB indexes are ordinary B-tree indexes on text/int columns
+plus the two primary keys (``files.path``, ``meta.key``).
 """
 
 import logging
@@ -112,32 +113,22 @@ INDEX_DDL = (
 SCHEMA_VERSION = 1
 
 
-class ReadOnlyError(RuntimeError):
-    """Raised when a write is attempted on a read-only store."""
-
-
 class GraphStore:
     """A DuckDB-backed code graph.
 
-    ``read_only`` opens the file without allowing writes — the mode used when a
-    frozen index is baked into an image. The schema and indexes are created only
-    on a writable open.
+    The file is always opened read-write — incremental updates are the rule for
+    this package — and the schema and indexes are ensured on every open.
     """
 
     def __init__(
         self,
         db_path: str | None = None,
         root: str | None = None,
-        read_only: bool | None = None,
         settings: Settings | None = None,
     ) -> None:
-        self.settings = settings or Settings(
-            db_path=db_path, root=root, read_only=read_only
-        )
-        self._read_only = self.settings.read_only
-        self._con = duckdb.connect(self.settings.db_path, read_only=self._read_only)
-        if not self._read_only:
-            self._ensure_schema()
+        self.settings = settings or Settings(db_path=db_path, root=root)
+        self._con = duckdb.connect(self.settings.db_path)
+        self._ensure_schema()
 
     def index(
         self,
@@ -161,7 +152,6 @@ class GraphStore:
         too — the ``.gitignore`` / ``.duckdbgraphignore`` rules are still honored
         either way.
         """
-        self._guard_writable()
         from duckdb_graph.indexer import index_folder
 
         return index_folder(
@@ -178,12 +168,6 @@ class GraphStore:
             self._con.execute(ddl)
         for ddl in INDEX_DDL:
             self._con.execute(ddl)
-
-    def _guard_writable(self) -> None:
-        if self._read_only:
-            raise ReadOnlyError(
-                "This store was opened read-only; writes are not allowed."
-            )
 
     def close(self) -> None:
         """Close the underlying connection."""
@@ -609,7 +593,7 @@ class GraphStore:
         return [self._row_to_node(row) for row in rows]
 
     def report(self) -> Report:
-        """Introspect the index by pure aggregation on the read-only connection.
+        """Introspect the index by pure aggregation on the open connection.
 
         An index built over a folder with zero indexable files returns
         ``nodes_by_kind={}``, ``edges_by_kind={}``, ``files_by_language={}``,
@@ -657,9 +641,7 @@ class GraphStore:
     def export(self) -> GraphExport:
         """Export the whole graph in the viewer's Cytoscape data contract.
 
-        Read-only compatible: performs no writes and never calls
-        :meth:`_guard_writable`, so it runs against a store opened with
-        ``read_only=True``. One ordered read per table (``nodes`` then
+        Performs no writes: one ordered read per table (``nodes`` then
         ``edges``) feeds the renamed export models — the stored ``node_id``
         becomes ``id`` and ``src_id``/``dst_id`` become ``source``/``target``
         because Cytoscape requires those keys.

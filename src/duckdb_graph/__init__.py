@@ -31,7 +31,7 @@ from duckdb_graph.models import (
     Node,
     Report,
 )
-from duckdb_graph.store import GraphStore, ReadOnlyError
+from duckdb_graph.store import GraphStore
 
 __all__ = [
     "GraphStore",
@@ -49,7 +49,6 @@ __all__ = [
     "JsTsExtractor",
     "Node",
     "PythonExtractor",
-    "ReadOnlyError",
     "Report",
     "Settings",
     "build_server",

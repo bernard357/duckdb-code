@@ -55,7 +55,7 @@ def _init_repo(tmp_path: Path) -> Path:
 
 
 def _functions(db: str) -> set[str]:
-    store = GraphStore(db_path=db, read_only=True)
+    store = GraphStore(db_path=db)
     try:
         return {
             r[0]

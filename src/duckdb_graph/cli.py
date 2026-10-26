@@ -3,9 +3,9 @@
 Six verbs: ``index`` a folder of source code, ``report`` on database content,
 ``impact`` the reverse-dependency set of a target, ``explain`` a target's
 structure, ``export`` the whole graph in the viewer's Cytoscape shape, and
-``mcp`` to serve the read-only tools over stdio. All honor the
-``DUCKDB_GRAPH_*`` environment variables and the ``--db`` override. Every
-serving verb opens the store read-only; only ``index`` opens it writable.
+``mcp`` to serve the query tools over stdio. All honor the ``DUCKDB_GRAPH_*``
+environment variables and the ``--db`` override. Every verb opens the store
+read-write, since incremental updates are the rule for this package.
 """
 
 from pathlib import Path
@@ -127,7 +127,7 @@ def watch(
 
     Runs until interrupted (Ctrl-C). On each batch of filesystem changes it
     runs the incremental re-index, so the database — and any MCP server serving
-    it read-only — reflects the current source without a manual ``index`` run.
+    it alongside — reflects the current source without a manual ``index`` run.
     Changes under the default-ignored directories (``.git``, ``node_modules``,
     ``.venv``, caches, …) never trigger a rebuild.
     """
@@ -173,7 +173,7 @@ def report(
     as_json: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
     """Report on database content."""
-    store = GraphStore(db_path=db, read_only=True)
+    store = GraphStore(db_path=db)
     try:
         result = store.report()
     finally:
@@ -206,7 +206,7 @@ def impact(
     as_json: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
     """Report the transitive reverse-dependency set of a target."""
-    store = GraphStore(db_path=db, read_only=True)
+    store = GraphStore(db_path=db)
     try:
         result = store.impact(target, depth=depth)
     finally:
@@ -232,7 +232,7 @@ def explain(
     as_json: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
     """Explain the structural neighbourhood of a target."""
-    store = GraphStore(db_path=db, read_only=True)
+    store = GraphStore(db_path=db)
     try:
         result = store.explain(target)
     finally:
@@ -269,7 +269,7 @@ def export(
     ),
 ) -> None:
     """Export the whole graph in the viewer's Cytoscape JSON shape."""
-    store = GraphStore(db_path=db, read_only=True)
+    store = GraphStore(db_path=db)
     try:
         result = store.export()
     finally:
@@ -284,6 +284,17 @@ def export(
 @app.command()
 def mcp(
     db: str | None = typer.Option(None, "--db", help="DuckDB file path."),
+    index_root: str | None = typer.Option(
+        None,
+        "--index",
+        help="Source folder to index on startup (sets root); "
+        "the graph is refreshed incrementally before serving.",
+    ),
+    no_startup_index: bool = typer.Option(
+        False,
+        "--no-startup-index",
+        help="Skip the startup index even when a folder is configured.",
+    ),
     transport: str = typer.Option(
         "stdio", "--transport", help="Transport to serve over: stdio|http."
     ),
@@ -294,17 +305,39 @@ def mcp(
         8000, "--port", help="HTTP bind port (http transport only)."
     ),
 ) -> None:
-    """Serve the read-only code-graph tools as an MCP server.
+    """Serve the code-graph tools as an MCP server.
 
     Defaults to stdio, the same-container subprocess transport. Pass
     ``--transport http`` to serve Streamable HTTP, which binds loopback
-    ``127.0.0.1:8000`` (path ``/mcp``) by default. Serving stays read-only over
-    both transports.
+    ``127.0.0.1:8000`` (path ``/mcp``) by default.
+
+    Pass ``--index <folder>`` (or set ``DUCKDB_GRAPH_ROOT``) to index that
+    folder on startup before serving: an incremental build runs — a full build
+    when the database is empty, otherwise only changed files are reconciled —
+    so the served graph reflects the current source. Progress goes to STDERR,
+    since stdout carries the MCP stdio protocol; a failed build aborts startup
+    (the server never serves a partial graph). Pass ``--no-startup-index`` to
+    skip the build and serve the database as a frozen, prebuilt index. A bare
+    ``--db`` with no folder configured also serves the prebuilt index as-is.
     """
     from duckdb_graph.config import Settings
+    from duckdb_graph.indexer import index_folder
     from duckdb_graph.mcp_server import run_http, run_stdio
 
-    settings = Settings(db_path=db, read_only=True)
+    settings = Settings(db_path=db, root=index_root)
+    if settings.root and not no_startup_index:
+        store = GraphStore(settings=settings)
+        try:
+            report = index_folder(store, settings.root, rebuild=False)
+        except Exception as exc:  # noqa: BLE001 — surface then fail fast
+            typer.echo(f"startup index of {settings.root} failed: {exc}", err=True)
+            store.close()
+            raise
+        store.close()
+        typer.echo(
+            f"indexed {settings.root}: {report.nodes} nodes, {report.edges} edges",
+            err=True,
+        )
     if transport == "http":
         run_http(settings, host=host, port=port)
     elif transport == "stdio":

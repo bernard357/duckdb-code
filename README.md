@@ -18,13 +18,13 @@ rather than silently dropped.
 
 ## SDK entry point
 
-Open a store against a local `.duckdb` file and query it. Open read-only in the
-serving path, when the index is a frozen artifact baked into the container:
+Open a store against a local `.duckdb` file and query it. The store always
+opens read-write, since incremental updates are the rule for this package:
 
 ```python
 from duckdb_graph import GraphStore
 
-store = GraphStore(db_path="graph.duckdb", read_only=True)
+store = GraphStore(db_path="graph.duckdb")
 
 result = store.impact("payments.charge.Charge")
 for hit in result.affected:
@@ -124,8 +124,7 @@ query", use the sibling
 
 ## MCP tool
 
-`duckdb-graph mcp` is an MCP-over-stdio server exposing three read-only
-tools:
+`duckdb-graph mcp` is an MCP-over-stdio server exposing three query tools:
 
 - `impact(target, …)` — transitive reverse-dependency set for a symbol or file.
 - `explain(target, …)` — structural neighbourhood of a symbol or file.
@@ -146,12 +145,19 @@ $ duckdb-graph mcp --transport http --host 127.0.0.1 --port 8000
 ```
 
 HTTP binds loopback `127.0.0.1:8000` at path `/mcp` by default; pass `--host`
-and `--port` to override. Serving stays strictly read-only over both
-transports, and both expose the identical `impact`, `explain`, and `report`
-tools with the same JSON-object shapes. The HTTP transport is the groundwork
-that will later let a client index a repository in a separate sandbox (for
-example a GitHub repository); that remote / sandbox indexing is __future work
-this transport enables__, not something shipped here.
+and `--port` to override. Both transports expose the identical `impact`,
+`explain`, and `report` tools with the same JSON-object shapes. The HTTP
+transport is the groundwork that will later let a client index a repository in
+a separate sandbox (for example a GitHub repository); that remote / sandbox
+indexing is __future work this transport enables__, not something shipped here.
+
+Pass `--index <folder>` (or set `DUCKDB_GRAPH_ROOT`) to index that folder on
+startup before serving — an incremental build, so the served graph reflects the
+current source without a separate `index` run. Build progress goes to stderr
+(stdout carries the MCP stdio protocol) and a failed build aborts startup. Pass
+`--no-startup-index`, or a bare `--db` with no folder configured, to serve a
+prebuilt database as a frozen snapshot. This is a one-shot startup build, not a
+watcher.
 
 ## Setup for working on the package itself
 
@@ -210,7 +216,6 @@ Settings resolve with the precedence: explicit argument >
 | --- | --- | --- | --- |
 | Database path | `db_path` | `DUCKDB_GRAPH_DB_PATH` | `graph.duckdb` |
 | Indexed source root | `root` | `DUCKDB_GRAPH_ROOT` | `None` |
-| Read-only | `read_only` | `DUCKDB_GRAPH_READ_ONLY` | `false` |
 
 ## Pointers
 

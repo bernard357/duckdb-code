@@ -10,12 +10,12 @@ $ pip install duckdb-graph
 
 ## SDK entry point
 
-Open a store against a local `.duckdb` file and query it. Open read-only in the serving path, when the index is a frozen artifact baked into the container:
+Open a store against a local `.duckdb` file and query it. The store always opens read-write, since incremental updates are the rule for this package:
 
 ```python
 from duckdb_graph import GraphStore
 
-store = GraphStore(db_path="graph.duckdb", read_only=True)
+store = GraphStore(db_path="graph.duckdb")
 
 result = store.impact("payments.charge.Charge")
 for hit in result.affected:
@@ -30,13 +30,15 @@ The graph also indexes a folder of Markdown pages: every `.md` / `.markdown` fil
 
 ## MCP tool
 
-`duckdb-graph mcp` is an MCP-over-stdio server exposing three read-only tools:
+`duckdb-graph mcp` is an MCP-over-stdio server exposing three query tools:
 
 - `impact(target, …)` — transitive reverse-dependency set for a symbol or file.
 - `explain(target, …)` — structural neighbourhood of a symbol or file.
 - `report()` — introspects the index: database path, schema version, languages, and node/edge counts.
 
 An MCP client spawns `duckdb-graph mcp` as a child process in the same container and talks to it over stdin/stdout; stdio is a same-container transport, not a network protocol.
+
+Pass `--index <folder>` (or set `DUCKDB_GRAPH_ROOT`) to index that folder on startup before serving — give the MCP server the source folder, not just a prebuilt database. The startup build is incremental (full when the database is empty, otherwise only changed files are reconciled), progress goes to stderr, and a failed build aborts startup. Pass `--no-startup-index`, or a bare `--db` with no folder configured, to serve a prebuilt database as a frozen snapshot; it is a one-shot startup build, not a watcher.
 
 The server also serves over **Streamable HTTP** with `--transport http`:
 
@@ -46,7 +48,7 @@ $ duckdb-graph mcp --transport http                  # http on 127.0.0.1:8000/mc
 $ duckdb-graph mcp --transport http --host 127.0.0.1 --port 8000
 ```
 
-HTTP binds loopback `127.0.0.1:8000` at path `/mcp` by default; `--host` and `--port` override it. Serving stays strictly read-only over both transports, which expose the identical `impact`, `explain`, and `report` tools with the same JSON-object shapes. The HTTP transport is the groundwork that will later let a client index a repository in a separate sandbox (for example a GitHub repository); that remote / sandbox indexing is **future work this transport enables**, not something shipped here.
+HTTP binds loopback `127.0.0.1:8000` at path `/mcp` by default; `--host` and `--port` override it. Both transports expose the identical `impact`, `explain`, and `report` tools with the same JSON-object shapes. The HTTP transport is the groundwork that will later let a client index a repository in a separate sandbox (for example a GitHub repository); that remote / sandbox indexing is **future work this transport enables**, not something shipped here.
 
 ## Setup for working on the package itself
 

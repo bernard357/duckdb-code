@@ -22,8 +22,8 @@ when it respects the project's shape:
 - __Boring, composable technology.__ Prefer the standard library and DuckDB's
   own features over new dependencies.
 - __Framework-agnostic.__ No hard dependency on a specific agent framework.
-- __Read-mostly and fast.__ The serving path opens read-only; only `index`
-  writes.
+- __Read-mostly and fast.__ Queries never mutate the graph; writes happen only
+  on `index` (including the `mcp` server's optional startup build).
 
 ## Good first contributions
 

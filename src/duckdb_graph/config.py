@@ -26,26 +26,14 @@ class Settings(BaseModel):
 
     db_path: str
     root: str | None = None
-    read_only: bool = False
 
     def __init__(
         self,
         db_path: str | None = None,
         root: str | None = None,
-        read_only: bool | None = None,
     ) -> None:
         resolved_db = db_path or _env("DB_PATH") or DEFAULT_DB_PATH
-        if read_only is None:
-            env_ro = _env("READ_ONLY")
-            resolved_ro = env_ro is not None and env_ro.lower() in {
-                "1",
-                "true",
-                "yes",
-            }
-        else:
-            resolved_ro = read_only
         super().__init__(
             db_path=resolved_db,
             root=root or _env("ROOT"),
-            read_only=resolved_ro,
         )

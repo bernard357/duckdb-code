@@ -12,8 +12,8 @@ the agent can ask the graph real questions instead of grepping blind:
 - __what is in this codebase?__ — `report()` profiles the index (languages,
   node and edge counts).
 
-The server is read-only and runs locally over stdio — a child process Kilo Code
-launches on demand, no network exposure. Semantic / natural-language search is a
+The server runs locally over stdio — a child process Kilo Code launches on
+demand, no network exposure. Semantic / natural-language search is a
 different concern handled by the sibling
 [`duckdb-vectors`](https://github.com/bernard357/duckdb-vectors); this graph
 answers structural, dependency-based questions.
@@ -145,9 +145,11 @@ Languages     : python
   ...
 ```
 
-The `index` command opens the database read-write to build it. The MCP server
-(stage 4) opens the __same file read-only__ — it serves the graph but never
-builds or refreshes it. Refreshing is an explicit re-index (stage 5).
+This explicit `index` run is optional: if you point the MCP server at the
+workspace with `--index` (stage 4), it builds the graph on startup for you. Run
+`index` here only when you want the database ready before configuring Kilo Code,
+or to inspect the `report` output first. Either way the database is built
+read-write, and the MCP server keeps it fresh (stage 5).
 
 ## 4. Configure Kilo Code's MCP {#stage-4}
 
@@ -163,10 +165,16 @@ choose __Local (stdio)__. Enter:
 | --- | --- |
 | Name | `duckdb-graph` |
 | Command | the absolute path from `which duckdb-graph` (e.g. `/Users/you/.local/bin/duckdb-graph`) |
-| Arguments | `mcp`, `--db`, `/Users/you/projects/my-app/.duckdb-graph/graph.duckdb` |
+| Arguments | `mcp`, `--db`, `/Users/you/projects/my-app/.duckdb-graph/graph.duckdb`, `--index`, `/Users/you/projects/my-app` |
 
-Use an __absolute__ `--db` path: Kilo Code launches the child process with a
-working directory you do not control, so a relative path may not resolve.
+Pass `--index <workspace>` so the server indexes the workspace on startup: the
+graph is built when the database is empty and refreshed incrementally
+otherwise, so a fresh clone needs no separate `index` run. Omit `--index` (or
+add `--no-startup-index`) to serve a prebuilt database as a frozen snapshot.
+
+Use __absolute__ `--db` and `--index` paths: Kilo Code launches the child
+process with a working directory you do not control, so a relative path may not
+resolve.
 
 The equivalent JSON (Kilo Code writes this for you; shown for reference — the
 exact shape varies by Kilo Code version, so prefer the UI and treat this as
@@ -181,7 +189,9 @@ illustrative):
         "/Users/you/.local/bin/duckdb-graph",
         "mcp",
         "--db",
-        "/Users/you/projects/my-app/.duckdb-graph/graph.duckdb"
+        "/Users/you/projects/my-app/.duckdb-graph/graph.duckdb",
+        "--index",
+        "/Users/you/projects/my-app"
       ]
     }
   }
@@ -197,15 +207,18 @@ server's environment instead:
     "duckdb-graph": {
       "type": "local",
       "command": ["/Users/you/.local/bin/duckdb-graph", "mcp"],
-      "env": { "DUCKDB_GRAPH_DB_PATH": "/Users/you/projects/my-app/.duckdb-graph/graph.duckdb" }
+      "env": {
+        "DUCKDB_GRAPH_DB_PATH": "/Users/you/projects/my-app/.duckdb-graph/graph.duckdb",
+        "DUCKDB_GRAPH_ROOT": "/Users/you/projects/my-app"
+      }
     }
   }
 }
 ```
 
 On __Windows__, a local command is wrapped through `cmd`: set the command to
-`cmd` and pass `/c`, `duckdb-graph`, `mcp`, `--db`, `<path>` as the arguments
-(per the Kilo Code MCP docs).
+`cmd` and pass `/c`, `duckdb-graph`, `mcp`, `--db`, `<path>`, `--index`,
+`<workspace>` as the arguments (per the Kilo Code MCP docs).
 
 __Verify:__ after adding the server, Kilo Code lists `duckdb-graph` under its MCP
 servers with the three tools — `impact`, `explain`, `report`. Ask the agent a
@@ -218,8 +231,10 @@ rephrased for compliance with licensing restrictions.
 
 ## 5. Keep the index fresh {#stage-5}
 
-The graph is a snapshot: the MCP server serves whatever the last `index` built,
-so re-index after you change files. Re-indexing is incremental by default — only
+With `--index` configured, the server refreshes the graph each time Kilo Code
+starts it. Within a long editing session, restarting the server is the coarse
+refresh and `watch` is the live one; re-index after you change files if you are
+serving without `--index`. Re-indexing is incremental by default — only
 changed, added, and deleted files are reconciled — so it is cheap to re-run:
 
 ```shell
@@ -240,10 +255,12 @@ Re-indexed: 1 rebuilt, 0 deleted, 267 nodes, 742 edges.
 
 The watcher respects the same ignore rules as `index` — churn under
 `node_modules`, `.venv`, `.git`, and the caches never triggers a rebuild. Note
-DuckDB is single-writer: run exactly one writer (the watcher) against a given
-database file; the Kilo Code MCP server opens the same file read-only to serve
-queries. If you see a lock conflict, ensure only one `watch` process is running
-for that database. Run the watcher from a dedicated terminal or a VS Code task.
+DuckDB is single-writer: run exactly one process against a given database file.
+If both `watch` and a `--index` MCP server target the same database, they
+contend for the writer — pick one (let the watcher own the database and serve
+the MCP server with `--no-startup-index`, or let the MCP server index on
+startup and skip the watcher). If you see a lock conflict, ensure only one
+process is writing that database. Run the watcher from a dedicated terminal or a VS Code task.
 
 If you prefer an explicit, on-demand refresh instead of a long-running watcher,
 there is a staleness window between an edit and the next manual re-index. Two
@@ -289,9 +306,10 @@ Activate the environment where you installed it, or use the absolute path from
 
 __Kilo Code does not list the tools.__ Re-check the Settings → MCP entry: the
 command must be the absolute executable path, the transport Local (stdio), and
-the `--db` path absolute. Confirm the same command runs in a terminal:
-`duckdb-graph mcp --db <abs-path> --transport stdio` should start without error
-(Ctrl-C to stop).
+the `--db` and `--index` paths absolute. Confirm the same command runs in a
+terminal: `duckdb-graph mcp --db <abs-path> --index <abs-workspace>` should
+index then start without error (Ctrl-C to stop); the startup `indexed …` line
+is printed to stderr.
 
 __Empty or sparse graph.__ Either the indexed path was wrong, the workspace is
 mostly in unsupported languages — only `.py`, `.pyi`, `.js`, `.jsx`, `.mjs`,
@@ -303,8 +321,11 @@ language explains a thin graph. If real source is being excluded, re-index with
 `--no-default-ignores` (which still honors `.gitignore`), or adjust the
 workspace `.gitignore` / `.duckdbgraphignore`.
 
-__Stale results.__ The agent sees the last indexed state. Re-run `duckdb-graph
-index` (stage 5) after changing files.
+__Stale results.__ The agent sees the graph as of the last build. With
+`--index` the server refreshes on startup, so restart it; otherwise re-run
+`duckdb-graph index` or run `watch` (stage 5) after changing files.
 
-__The server never refreshes the graph.__ By design — the MCP server opens the
-database read-only. Only `duckdb-graph index` builds or updates it.
+__The graph is not refreshing mid-session.__ The `--index` build runs once at
+startup, not continuously — it is not a watcher. Restart the MCP server to
+rebuild, or run `duckdb-graph watch` to keep the graph current live, or pass
+`--no-startup-index` to serve a prebuilt database as a frozen snapshot.

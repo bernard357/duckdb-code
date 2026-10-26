@@ -31,7 +31,7 @@ def indexed_db(tmp_path):
 
 
 def _server(db):
-    return build_server(Settings(db_path=db, root=str(FIXTURE), read_only=True))
+    return build_server(Settings(db_path=db, root=str(FIXTURE)))
 
 
 def _result(db, name, args):
@@ -51,8 +51,8 @@ def test_exactly_four_tools_registered(indexed_db):
 
 def test_streamable_http_app_carries_the_tools(indexed_db):
     # HTTP wiring: the same build_server produces a Starlette app over the
-    # Streamable HTTP transport, with the identical read-only tools and
-    # no network listener bound.
+    # Streamable HTTP transport, with the identical tools and no network
+    # listener bound.
     server = _server(indexed_db)
     app = server.streamable_http_app()
     assert isinstance(app, Starlette)
@@ -141,3 +141,43 @@ def test_export_tool_inline_cap_falls_back_to_path(indexed_db, monkeypatch):
     assert "path" in payload
     assert "note" in payload
     assert Path(payload["path"]).exists()
+
+
+def test_startup_index_populates_an_empty_db(tmp_path):
+    # Mirrors the `mcp --index` startup build: an empty db is populated by an
+    # incremental build (which full-builds when empty), then the report tool
+    # sees the graph.
+    db = str(tmp_path / "startup.duckdb")
+    store = GraphStore(db_path=db, root=str(FIXTURE))
+    report = index_folder(store, FIXTURE, rebuild=False)
+    store.close()
+    assert report.nodes > 0
+    assert report.edges > 0
+
+    payload = _result(db, "report", {})
+    assert payload["nodes_by_kind"]
+    assert payload["files_by_language"] == {"python": 5, "typescript": 2}
+
+
+def test_startup_index_second_run_is_a_noop(tmp_path):
+    # A second incremental build over the unchanged folder leaves the graph
+    # totals identical — the startup index is idempotent.
+    db = str(tmp_path / "startup.duckdb")
+    store = GraphStore(db_path=db, root=str(FIXTURE))
+    first = index_folder(store, FIXTURE, rebuild=False)
+    second = index_folder(store, FIXTURE, rebuild=False)
+    store.close()
+    assert (second.nodes, second.edges) == (first.nodes, first.edges)
+    assert second.mode == "incremental"
+
+
+def test_store_opened_for_serving_still_accepts_writes(tmp_path):
+    # The serving path opens the store read-write (read-only was removed), so a
+    # store opened the same way the server opens it can still be written.
+    db = str(tmp_path / "startup.duckdb")
+    store = GraphStore(db_path=db, root=str(FIXTURE))
+    index_folder(store, FIXTURE, rebuild=False)
+    # A second index on the same open store writes without any guard refusing.
+    report = index_folder(store, FIXTURE, rebuild=True)
+    store.close()
+    assert report.nodes > 0

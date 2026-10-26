@@ -77,11 +77,11 @@ that helps referencing `duckdb-graph`.
   into the agent's own container image, so there is no external code-graph
   service to run. It parses Python and JavaScript/TypeScript with tree-sitter
   and also indexes Markdown link graphs, and it ships an MCP server (stdio and
-  Streamable HTTP) exposing its read-only tools.
+  Streamable HTTP) exposing its query tools.
 - __Keywords:__ duckdb, code-graph, tree-sitter, impact-analysis, static-analysis,
   dependency-graph, agents, mcp, llm, codebase
 - __Install:__ `pip install duckdb-graph`
-- __MCP tools:__ `duckdb-graph mcp` exposes three read-only tools —
+- __MCP tools:__ `duckdb-graph mcp` exposes three query tools —
   `impact(target, …)`, `explain(target, …)`, and `report()` — over stdio
   (same-container subprocess) and Streamable HTTP (`--transport http`).
 - __License:__ MIT

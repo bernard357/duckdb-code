@@ -28,8 +28,8 @@ Contributions land fastest when they fit the project's shape:
 - __Boring, composable technology.__ Prefer the standard library and DuckDB's
   own features over new dependencies.
 - __Framework-agnostic.__ No hard dependency on a specific agent framework.
-- __Read-mostly and fast.__ The serving path opens read-only; only `index`
-  writes.
+- __Read-mostly and fast.__ Queries never mutate the graph; writes happen only
+  on `index` (including the `mcp` server's optional startup build).
 
 ## How do I add an extractor? {#how-do-i-add-an-extractor}
 
@@ -62,7 +62,7 @@ blocks. Pages are reachable from the VitePress sidebar in
 
 Open an issue with what you expected and what happened, a minimal snippet or
 steps to reproduce, and your Python version plus how the store was configured
-(database path, read-only).
+(database path, indexed root).
 
 ## What are the prerequisites?
 

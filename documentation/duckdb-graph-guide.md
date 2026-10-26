@@ -78,8 +78,8 @@ heading structure, and `report` surfaces the page/heading/tag counts. See the
 ## The CLI {#the-cli}
 
 The `duckdb-graph` CLI exposes seven verbs: `index`, `watch`, `report`,
-`impact`, `explain`, `export`, and `mcp`. Every serving verb opens the store
-read-only; `index` and `watch` open it writable. All honor the
+`impact`, `explain`, `export`, and `mcp`. Every verb opens the store read-write
+— incremental updates are the rule for this package. All honor the
 `DUCKDB_GRAPH_*` environment variables and the `--db` override, and `--json`
 emits machine-readable output.
 
@@ -96,8 +96,8 @@ $ duckdb-graph explain GraphStore --db graph.duckdb
 `watch` runs until interrupted, re-indexing incrementally on every relevant
 file change (it respects the same ignore rules as `index`, so dependency-tree
 churn never triggers a rebuild). DuckDB is single-writer: run exactly one
-writer — one `index` or one `watch` — against a database file at a time; an
-`mcp` server reads the same file read-only alongside it.
+process against a database file at a time — one `index`, one `watch`, or one
+`mcp` server (which may index on startup, see below).
 
 By default `index` never descends into dependency or build trees: it skips the
 `.git` directory and the dependency/build/cache directories `node_modules`,
@@ -113,8 +113,8 @@ and size exclusions while still honoring the ignore files.
 
 ## The MCP server {#the-mcp-server}
 
-`duckdb-graph mcp` serves four read-only tools to any MCP client — `impact`,
-`explain`, `report`, and `export` — with the same JSON-object shapes as the SDK.
+`duckdb-graph mcp` serves four tools to any MCP client — `impact`, `explain`,
+`report`, and `export` — with the same JSON-object shapes as the SDK.
 `export` returns the whole graph as JSON: by default it writes the
 `{meta, nodes, edges}` document to a file (given `out`, or a temp path) and
 returns a small `{path, node_count, edge_count, meta}` summary rather than the
@@ -133,8 +133,26 @@ Over __stdio__, an MCP client spawns `duckdb-graph mcp` as a child process in
 the same container and talks to it over stdin/stdout; stdio is a same-container
 transport, not a network protocol. Over __Streamable HTTP__ (`--transport
 http`), the server binds loopback `127.0.0.1:8000` at path `/mcp` by default;
-pass `--host` and `--port` to override. Serving stays strictly read-only over
-both transports.
+pass `--host` and `--port` to override.
+
+Pass `--index <folder>` to index that folder on startup before serving — give
+the MCP server the source folder, not just a prebuilt database:
+
+```shell
+$ duckdb-graph mcp --db graph.duckdb --index ./my-project   # index then serve
+$ duckdb-graph mcp --db graph.duckdb --index ./my-project --no-startup-index
+$ duckdb-graph mcp --db graph.duckdb                        # serve as-is
+```
+
+The startup build is incremental — a full build when the database is empty,
+otherwise only changed files are reconciled — so the served graph reflects the
+current source without a separate `index` run. `DUCKDB_GRAPH_ROOT` sets the
+same folder. Progress goes to stderr, since stdout carries the MCP stdio
+protocol, and a failed build aborts startup rather than serving a partial
+graph. Pass `--no-startup-index` to skip the build and serve the database as a
+frozen, prebuilt index; a bare `--db` with no folder configured does the same.
+This is a one-shot build at startup, not a watcher — use `watch` to keep the
+index fresh during a long session.
 
 ## Export then view {#export-then-view}
 

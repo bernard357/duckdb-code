@@ -30,3 +30,16 @@ Unreleased pending the first release.
 - The documentation site (VitePress), CI and release workflows, and the
   packaging and discovery kit aligning `duckdb-graph` with the sibling
   `duckdb-vectors`.
+- `duckdb-graph mcp --index <folder>` indexes the folder on startup before
+  serving — an incremental build (full on an empty database, otherwise only
+  changed files reconciled) so the served graph reflects the current source
+  without a separate `index` run. Progress goes to stderr and a failed build
+  aborts startup. `--no-startup-index` skips the build to serve a prebuilt
+  database as a frozen snapshot.
+
+### Removed
+
+- The read-only store mode: the `read_only` setting, the `DUCKDB_GRAPH_READ_ONLY`
+  environment variable, the `GraphStore(read_only=…)` argument, and the
+  `ReadOnlyError` write guard. The store now always opens read-write, since
+  incremental updates are the rule for this package.

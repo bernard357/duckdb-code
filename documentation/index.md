@@ -18,10 +18,10 @@ For the common case — one repository, packaged with one agent — you can skip
 
 A few deliberate choices shape how `duckdb-graph` indexes and serves:
 
-- __One DuckDB file is one graph__, baked read-only into the agent's container image — no external graph service and no network hop on the query path.
+- __One DuckDB file is one graph__ — no external graph service and no network hop on the query path.
 - __Code and Markdown stay in separate domains__ in the same database: a Markdown link never binds to a code symbol and a code edge never binds to a page, so the two corpora share one file without crosstalk.
 - __Incremental, etag-driven re-index__: `index` is incremental by default. A full rebuild runs on an empty database or with `rebuild=True`; otherwise only changed, added, and deleted files are reconciled by comparing each file's stored `etag` against a freshly computed one. The incremental result is identical to a full rebuild of the same on-disk state.
-- __Read-only serving path__: every serving verb opens the store read-only; only `index` opens it writable.
+- __Read-write everywhere__: the store always opens read-write, since incremental updates are the rule — the `mcp` server can index its target folder on startup (`--index`) and refresh it in place, rather than serving a frozen file.
 
 ## Use cases
 
@@ -53,7 +53,7 @@ Then query the graph from within your python code:
 ```python
 from duckdb_graph import GraphStore
 
-store = GraphStore(db_path="graph.duckdb", read_only=True)
+store = GraphStore(db_path="graph.duckdb")
 
 result = store.impact("payments.charge.Charge")
 for hit in result.affected:
@@ -83,7 +83,6 @@ Settings resolve with the precedence: explicit argument > `DUCKDB_GRAPH_*` envir
 | --- | --- | --- | --- |
 | Database path | `db_path` | `DUCKDB_GRAPH_DB_PATH` | `graph.duckdb` |
 | Indexed source root | `root` | `DUCKDB_GRAPH_ROOT` | `None` |
-| Read-only | `read_only` | `DUCKDB_GRAPH_READ_ONLY` | `false` |
 
 ## Contributing
 

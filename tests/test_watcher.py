@@ -54,7 +54,7 @@ def test_watch_reindexes_on_a_relevant_change(tmp_path):
     assert report.mode == "incremental"
     assert report.rebuilt >= 1
     # The new function is now in the graph.
-    store = GraphStore(db_path=db, read_only=True)
+    store = GraphStore(db_path=db)
     try:
         names = {
             row[0]

@@ -3,16 +3,14 @@
 Indexes the committed fixture once per test via :func:`index_folder` and asserts
 the end-to-end behaviour of the serving surface (AC3/AC5), fix 2 (best_effort
 seed-origin propagation), the single-shape ``ExplanationResult``, report
-per-kind/per-language aggregation and merged roots, the fix 6 empty-index
-contract, and the read-only write guard.
+per-kind/per-language aggregation and merged roots, and the fix 6 empty-index
+contract.
 """
 
 from pathlib import Path
 
-import pytest
-
 from duckdb_graph.indexer import index_folder
-from duckdb_graph.store import GraphStore, ReadOnlyError
+from duckdb_graph.store import GraphStore
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample"
 MARKDOWN_FIXTURE = Path(__file__).parent / "fixtures" / "markdown"
@@ -315,17 +313,17 @@ def test_markdown_link_never_binds_to_a_code_node_end_to_end(tmp_path):
     store.close()
 
 
-def test_read_only_store_rejects_writes(tmp_path):
+def test_reopened_store_allows_writes(tmp_path):
     db_path = str(tmp_path / "graph.duckdb")
     writer = _indexed_at(db_path)
     writer.close()
 
-    reader = GraphStore(db_path=db_path, read_only=True)
-    with pytest.raises(ReadOnlyError):
-        reader._guard_writable()
-    with pytest.raises(ReadOnlyError):
-        index_folder(reader, FIXTURE)
-    reader.close()
+    # The store always opens read-write: a second process can reopen the same
+    # file and re-index it without a guard rejecting the write.
+    reopened = GraphStore(db_path=db_path, root=str(FIXTURE))
+    report = index_folder(reopened, FIXTURE)
+    assert report.nodes > 0
+    reopened.close()
 
 
 def _indexed_at(db_path: str) -> GraphStore:
@@ -398,13 +396,13 @@ def test_export_serialized_keys_are_cytoscape_shape(tmp_path):
     store.close()
 
 
-def test_export_runs_on_read_only_store(tmp_path):
+def test_export_runs_on_reopened_store(tmp_path):
     db_path = str(tmp_path / "graph.duckdb")
     writer = _indexed_at(db_path)
     writer_export = writer.export()
     writer.close()
 
-    reader = GraphStore(db_path=db_path, read_only=True)
+    reader = GraphStore(db_path=db_path)
     export = reader.export()
     assert len(export.nodes) == len(writer_export.nodes)
     assert len(export.edges) == len(writer_export.edges)

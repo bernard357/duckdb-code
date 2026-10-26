@@ -569,8 +569,6 @@ def index_folder(
     if not folder.is_dir():
         raise NotADirectoryError(f"Not a directory: {folder}")
 
-    store._guard_writable()
-
     if rebuild or not _db_is_populated(store):
         return _full_index(
             store, folder, recursive, use_default_ignores=use_default_ignores
@@ -1069,7 +1067,6 @@ def _rebuild_file(
     ``WHERE path = ?`` removes exactly that file's contribution; re-inserting
     the extraction's rows rebuilds it, leaving every other file untouched.
     """
-    store._guard_writable()
     con = store._con
     con.execute("DELETE FROM edges WHERE path = ?", [path])
     con.execute("DELETE FROM nodes WHERE path = ?", [path])

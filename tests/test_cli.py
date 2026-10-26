@@ -227,6 +227,81 @@ def test_mcp_default_dispatches_to_run_stdio(monkeypatch):
     assert calls == {"stdio": 1}
 
 
+def test_mcp_help_lists_startup_index_flags():
+    options = _option_names("mcp")
+    assert "--index" in options
+    assert "--no-startup-index" in options
+
+
+def _patch_serve_noops(monkeypatch):
+    """Patch both runners to no-ops so the verb returns after the startup build.
+
+    Returns the ``calls`` dict so a test can assert which transport was reached
+    (or that neither was, when the startup build fails).
+    """
+    import duckdb_graph.mcp_server as mcp_server
+
+    calls: dict = {}
+    monkeypatch.setattr(mcp_server, "run_stdio", lambda *a, **k: calls.update(stdio=1))
+    monkeypatch.setattr(mcp_server, "run_http", lambda *a, **k: calls.update(http=1))
+    return calls
+
+
+def _node_count(db: str) -> int:
+    from duckdb_graph.store import GraphStore
+
+    store = GraphStore(db_path=db)
+    try:
+        return sum(store.report().nodes_by_kind.values())
+    finally:
+        store.close()
+
+
+def test_mcp_index_builds_db_before_serving(tmp_path, monkeypatch):
+    # --index runs the startup incremental build (populating an empty db), then
+    # dispatches to the stdio runner. The build progress line is on stderr.
+    calls = _patch_serve_noops(monkeypatch)
+    db = str(tmp_path / "startup.duckdb")
+    result = runner.invoke(app, ["mcp", "--db", db, "--index", str(FIXTURE)])
+    assert result.exit_code == 0, result.output
+    assert calls == {"stdio": 1}
+    assert _node_count(db) > 0
+
+
+def test_mcp_no_startup_index_skips_the_build(tmp_path, monkeypatch):
+    # --no-startup-index leaves the db empty even though --index names a folder.
+    calls = _patch_serve_noops(monkeypatch)
+    db = str(tmp_path / "startup.duckdb")
+    result = runner.invoke(
+        app, ["mcp", "--db", db, "--index", str(FIXTURE), "--no-startup-index"]
+    )
+    assert result.exit_code == 0, result.output
+    assert calls == {"stdio": 1}
+    assert _node_count(db) == 0
+
+
+def test_mcp_bare_db_does_not_reindex(tmp_path, monkeypatch):
+    # A prebuilt db served with no --index is left exactly as-is.
+    db = _index(tmp_path)
+    before = _node_count(db)
+    calls = _patch_serve_noops(monkeypatch)
+    result = runner.invoke(app, ["mcp", "--db", db])
+    assert result.exit_code == 0, result.output
+    assert calls == {"stdio": 1}
+    assert _node_count(db) == before
+
+
+def test_mcp_failed_startup_index_aborts_without_serving(tmp_path, monkeypatch):
+    # Pointing --index at a non-directory fails fast: the verb exits non-zero
+    # and neither transport runner is ever reached.
+    calls = _patch_serve_noops(monkeypatch)
+    db = str(tmp_path / "startup.duckdb")
+    missing = str(tmp_path / "does-not-exist")
+    result = runner.invoke(app, ["mcp", "--db", db, "--index", missing])
+    assert result.exit_code != 0
+    assert calls == {}
+
+
 def test_version_flag_prints_metadata_version():
     """`--version` exits 0 with the installed version, not the no-args help."""
     from importlib.metadata import version
