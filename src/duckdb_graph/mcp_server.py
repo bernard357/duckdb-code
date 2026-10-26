@@ -103,7 +103,8 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             "- `export` — get access to the entire graph as JSON when a whole-"
             "graph view or offline processing is needed.\n"
             "Targets are a dotted qualified name (e.g. `pkg.module.Symbol`) or a "
-            "file path. The graph covers code and Markdown pages."
+            "file path. The graph covers code and Markdown pages. Every tool "
+            "returns a single JSON object."
         ),
     )
 
