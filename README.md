@@ -38,9 +38,8 @@ $ duckdb-graph --help
 Prefer `pip`? `pip install duckdb-graph` into a virtual environment works the
 same way.
 
-Until the PyPI release is published (or any time you want an unreleased build),
-run straight from a git ref or a local checkout — the same commands, with
-`--from`:
+To run an unreleased build — a git ref or a local checkout — use the same
+commands with `--from`:
 
 ```shell
 $ uvx --from git+https://github.com/bernard357/duckdb-graph duckdb-graph --help

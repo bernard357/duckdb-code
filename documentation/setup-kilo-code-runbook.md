@@ -70,9 +70,9 @@ $ duckdb-graph --help
 (`pip install duckdb-graph` into a virtual environment is the non-uv
 equivalent.)
 
-__Running from a local clone.__ Until the PyPI release is published — or any
-time you want an unreleased build — run from a checkout of the repository. With
-uv, point `--from` at the clone (or a git ref); nothing is installed:
+__Running from a local clone.__ To run an unreleased build, run from a checkout
+of the repository. With uv, point `--from` at the clone (or a git ref); nothing
+is installed:
 
 ```shell
 $ git clone https://github.com/bernard357/duckdb-graph.git
