@@ -23,6 +23,16 @@ A few deliberate choices shape how `duckdb-graph` indexes and serves:
 - __Incremental, etag-driven re-index__: `index` is incremental by default. A full rebuild runs on an empty database or with `rebuild=True`; otherwise only changed, added, and deleted files are reconciled by comparing each file's stored `etag` against a freshly computed one. The incremental result is identical to a full rebuild of the same on-disk state.
 - __Read-write everywhere__: the store always opens read-write, since incremental updates are the rule — the `mcp` server can index its target folder on startup (`--index`) and refresh it in place, rather than serving a frozen file.
 
+## Keeping the graph fresh in an agentic IDE
+
+Because re-indexing is incremental and cheap, the graph can track the working tree as an agent edits it, rather than going stale the moment code changes. Three mechanisms keep it current:
+
+- `duckdb-graph index` reconciles only what changed since the last run (etag-driven), so a re-index after an edit is a near-instant no-op when nothing moved.
+- `duckdb-graph watch <folder>` runs as a long-lived process and re-indexes incrementally on every relevant file change, so the graph stays live with no manual step — the natural fit for an IDE session where the agent is actively editing.
+- `duckdb-graph mcp --index <folder>` folds a startup incremental build into the MCP server, so a freshly launched agent serves a graph that already reflects the current source.
+
+The upshot: an agent asking `impact` mid-session sees the blast radius of the code as it is now, not as it was at the last manual index.
+
 ## Use cases
 
 `duckdb-graph` has been designed for the following use cases:

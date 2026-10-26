@@ -9,12 +9,65 @@ codebase to a local agent, in 3 steps:
 2. store that graph in a single DuckDB database baked next to your agent
 3. answer `impact`, `explain`, and `report` questions with a local function call
 
-Where [`duckdb-vectors`](https://github.com/bernard357/duckdb-vectors) answers
-"what text is semantically near this query", `duckdb-graph` answers "what
-code is affected if this symbol or file changes" and "what is the structure of
-this code". The must-be-reliable deliverable is `impact`: a transitive
+## When your agent needs structural code questions
+
+Most agents reason over code they cannot see the shape of: they read files one
+at a time and guess at the blast radius of a change. The honest requirement is
+small and structural — given a symbol or a file, what depends on it, what does
+it depend on, and what is the whole thing shaped like. The reflex answer is
+large: stand up a code-intelligence service, index into a hosted graph
+database, wire the agent to it over the network. For one repository,
+read-mostly, that is a lot of moving parts to own.
+
+For the common case — one repository, packaged with one agent — you can skip
+the external service entirely. Index the code into a single DuckDB file, keep
+that file next to the agent, and answer `impact` / `explain` / `report` with a
+local function call, no network round-trip. Where
+[`duckdb-vectors`](https://github.com/bernard357/duckdb-vectors) answers "what
+text is semantically near this query", `duckdb-graph` answers "what code is
+affected if this symbol or file changes" and "what is the structure of this
+code". The must-be-reliable deliverable is `impact`: a transitive
 reverse-dependency set over the edge graph, with every best-effort edge flagged
 rather than silently dropped.
+
+## Data architecture decisions and facts
+
+A few deliberate choices shape how `duckdb-graph` indexes and serves:
+
+- __One DuckDB file is one graph__ — no external graph service and no network
+  hop on the query path.
+- __Code and Markdown stay in separate domains__ in the same database: a
+  Markdown link never binds to a code symbol and a code edge never binds to a
+  page, so the two corpora share one file without crosstalk.
+- __Incremental, etag-driven re-index__: `index` is incremental by default. A
+  full rebuild runs on an empty database or with `rebuild=True`; otherwise only
+  changed, added, and deleted files are reconciled by comparing each file's
+  stored `etag` against a freshly computed one. The incremental result is
+  identical to a full rebuild of the same on-disk state.
+- __Read-write everywhere__: the store always opens read-write, since
+  incremental updates are the rule — the `mcp` server can index its target
+  folder on startup (`--index`) and refresh it in place, rather than serving a
+  frozen file.
+
+## Keeping the graph fresh in an agentic IDE
+
+Because re-indexing is incremental and cheap, the graph can track the working
+tree as an agent edits it, rather than going stale the moment code changes.
+Three mechanisms keep it current:
+
+- `duckdb-graph index` reconciles only what changed since the last run
+  (etag-driven), so a re-index after an edit is a near-instant no-op when
+  nothing moved.
+- `duckdb-graph watch <folder>` runs as a long-lived process and re-indexes
+  incrementally on every relevant file change, so the graph stays live with no
+  manual step — the natural fit for an IDE session where the agent is actively
+  editing.
+- `duckdb-graph mcp --index <folder>` folds a startup incremental build into
+  the MCP server, so a freshly launched agent serves a graph that already
+  reflects the current source.
+
+The upshot: an agent asking `impact` mid-session sees the blast radius of the
+code as it is now, not as it was at the last manual index.
 
 ## Install and run
 
@@ -249,7 +302,7 @@ Settings resolve with the precedence: explicit argument >
 
 ## Pointers
 
-- Worked examples: [documentation/examples.md](documentation/examples.md) — the `make self-test` requests, explained with observed results.
+- Worked examples: [documentation/examples.md](https://github.com/bernard357/duckdb-graph/blob/main/documentation/examples.md) — the `make self-test` requests, explained with observed results.
 - Documentation site: <https://bernard357.github.io/duckdb-graph/>
 - PyPI project: <https://pypi.org/project/duckdb-graph/>
 
