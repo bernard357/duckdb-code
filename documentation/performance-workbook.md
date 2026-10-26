@@ -6,14 +6,83 @@ decisions that keep it fast. The numbers here come from indexing the author's
 directories pruned) — a deliberately large, real-world target used to find the
 limits.
 
+- [How to optimise performance?](#how-to-optimise)
 - [Graph indexing: resolve edges in SQL, not in a Python loop](#graph-indexing)
 - [Graph traversal at scale: recursive SQL or DuckPGQ](#graph-traversal)
 - [Measured scale of a large tree](#measured-scale)
 
+## How to optimise performance? {#how-to-optimise}
+
+Three optimizations carry almost all of the speed `duckdb-graph` has on a large
+tree, in priority order. The first is the one you tune; the other two are built
+in. Every figure below is measured on the `~/Public` tree (≈12 repositories);
+the sections after this one show the full before/after and the reasoning.
+
+### 1. Avoid indexing what you don't need — tune `.gitignore`
+
+The cheapest work is the work never done, and the single biggest lever is
+_what you exclude_. `duckdb-graph` skips, by default, the `.git` directory, the
+usual dependency/build directories (`node_modules`, `.venv`, `vendor`, `dist`,
+`build`, `__pycache__`, the `*_cache` dirs), files over 1 MB, and anything
+matched by a `.gitignore` or `.duckdbgraphignore` — honored __hierarchically__,
+so every directory's ignore file applies to it and its descendants (git
+semantics), not only one at the indexed root.
+
+Honoring nested ignore files alone, on `~/Public`, removed __52% of files and
+86% of edges__, cutting index time from 524 s to 104 s and the database from
+251 MB to 72 MB (see [measured scale](#measured-scale)). That is a larger win
+than any engine change here — generated code, build output, vendored trees, and
+caches are pure noise in a code graph, and keeping them out makes every later
+query faster and the impact/explain signal cleaner.
+
+__How to tune it.__ If a `report` shows a surprising file count, or `impact`
+surfaces vendored or generated symbols:
+
+- Make sure each repository under the indexed path has its own `.gitignore`
+  (they are now honored); the tool respects them automatically.
+- For paths you want excluded from the graph but NOT from git, add a
+  `.duckdbgraphignore` (gitignore syntax) in the relevant directory — e.g.
+  ignore a large generated-fixtures tree, sample data, or a docs build output
+  that git happens to track.
+- Verify with `duckdb-graph report`: the excluded files fold into the
+  `skipped` count, and the node/edge totals should drop to the real source.
+- Only reach for `--no-default-ignores` when you deliberately want a vendored
+  tree in the graph; `.gitignore`/`.duckdbgraphignore` are still honored even
+  then.
+
+### 2. Index quickly — batched SQL, not per-row work
+
+Indexing resolves cross-file edges and writes the graph. Both must scale with
+`nodes + edges`, never with their product, and must persist in bulk. Two fixes
+took a 2,768-file repository from "did not finish in 5+ minutes" to __~65 s__
+(see [graph indexing](#graph-indexing)): an indexed last-segment lookup replaced
+a per-edge full-table scan, and an edge-fan-out cap plus `executemany` bulk
+inserts replaced a 166k→598k best-effort edge explosion written one row at a
+time (~236 s of inserts alone). You do not configure any of this — it is why a
+real codebase indexes in seconds rather than hanging — but the rule generalizes
+to any DuckDB-backed tool: resolve set-based, cap noisy fan-out, write in bulk.
+
+### 3. Query with graph techniques in the engine
+
+`impact` and `explain` traverse the graph with a single recursive SQL closure
+(`WITH RECURSIVE`), not a per-hop round-trip loop. On the full `~/Public` graph
+a deep reverse-dependency query (28,674 affected nodes) runs in __93 ms in SQL
+vs 531 ms__ for the former Python breadth-first search — ~5.7× faster, identical
+results (see [graph traversal](#graph-traversal)). Pushing the multi-hop walk
+into the engine as one query is what keeps change-impact analysis responsive at
+six-figure graph sizes. (DuckDB's DuckPGQ graph extension was evaluated and
+ruled out — its parser does not activate on the pinned DuckDB; core
+`WITH RECURSIVE` wins on both speed and zero added dependency.)
+
+__In short:__ exclude aggressively (your `.gitignore` is the main dial),
+re-index after edits (it is incremental and cheap), and trust that traversal is
+already engine-native. The payoff compounds: on `~/Public` the combined effect
+is an 86% smaller graph built 80% faster, then queried ~5.7× faster still.
+
 ## Graph indexing: resolve edges in SQL, not in a Python loop {#graph-indexing}
 
 Indexing is two phases: __extraction__ (tree-sitter parses each file into nodes
-and *unresolved* edges that carry a raw target string) and __resolution__ (the
+and _unresolved_ edges that carry a raw target string) and __resolution__ (the
 cross-file pass that binds every unresolved edge to a real node by building a
 symbol table and matching targets against it). Extraction is linear in the
 number of files and stays cheap. Resolution is where scale is won or lost.
@@ -69,7 +138,7 @@ phase before optimizing.
 
 ## Graph traversal at scale: recursive SQL or DuckPGQ {#graph-traversal}
 
-Once a large graph *exists*, the second question is how `impact` and `explain`
+Once a large graph _exists_, the second question is how `impact` and `explain`
 traverse it. Today the traversal is a Python breadth-first search: a `visited`
 set and a frontier, issuing one flat `SELECT ... WHERE dst_id IN (...)` per hop.
 That is correct and fine for a single repository, but at full-tree scale — on
@@ -161,7 +230,7 @@ is the real code-and-docs structure of the tree, not an inflated one.
 
 Two lessons generalize: (1) a personal projects folder still reaches a
 six-figure graph, which is squarely where the indexing and traversal decisions
-above stop being optional; and (2) what you *exclude* can matter more than any
+above stop being optional; and (2) what you _exclude_ can matter more than any
 engine optimization — the ~86% edge reduction here dwarfs the ~5.7x traversal
 speed-up, because the cheapest work is the work you never do. The traversal
 verdict above (`WITH RECURSIVE`) was measured on the larger pre-fix graph; it
