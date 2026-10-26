@@ -19,8 +19,10 @@ in behaviour. Each tool returns exactly one JSON object (an
 consuming agent parses one stable shape per tool.
 """
 
+import inspect
 import os
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 from mcp.server.mcpserver import MCPServer
@@ -34,64 +36,23 @@ from duckdb_graph.store import GraphStore
 # and inline is a bounded convenience for small graphs only.
 _INLINE_ELEMENT_CAP = 2000
 
-# The client-facing description each tool advertises. Kept as module constants
-# (passed explicitly to ``@server.tool(description=...)``) rather than drawn
-# from the function docstring: the SDK uses ``fn.__doc__`` verbatim, so a
-# docstring would leak the source indentation that ruff enforces into the text
-# a client reads. Each leads with the intent ("use this to …") so an agent can
-# route a task to the right tool.
-_IMPACT_DESCRIPTION = (
-    "Use this to evaluate the implications of a change. Returns the transitive "
-    "reverse-dependency set of a symbol or file path — everything that depends "
-    "on the target, directly or indirectly — so you can scope the blast radius "
-    "before editing it. "
-    "Argument: 'target' is a dotted qualified name (e.g. 'pkg.module.Symbol') "
-    "or a file path; 'depth' optionally caps how many hops out to walk. "
-    "Returns one JSON object: {target, resolved (the node(s) the target matched), "
-    "ambiguous (true when a symbol matched more than one qualified name), "
-    "affected (nodes that depend on the target, each {node, distance >= 1, "
-    "resolution: 'exact'|'best_effort'}, deterministically ordered), "
-    "affected_files (sorted distinct paths)}. An unresolved target returns empty "
-    "'resolved' and 'affected'."
-)
-_EXPLAIN_DESCRIPTION = (
-    "Use this to review the structure around a given symbol or file. Reach for "
-    "this to understand a symbol or file in context before changing or extending "
-    "it. "
-    "Argument: 'target' is a dotted qualified name (e.g. 'pkg.module.Symbol') or "
-    "a file path. "
-    "Returns one JSON object: {target, resolved (the node(s) the target matched), "
-    "ambiguous, explanations (one per resolved node, in the same order)}. Each "
-    "explanation is {node, defines (symbols it contains), fan_out (what it "
-    "depends on), fan_in (what depends on it), bases and subclasses (for a class "
-    "node), fan_in_count, fan_out_count}. An unresolved target returns empty "
-    "'resolved' and 'explanations'."
-)
-_REPORT_DESCRIPTION = (
-    "Use this to explore the metadata of the codebase index itself. Introspects "
-    "the index rather than the code; reach for this to learn what the index "
-    "contains and how big it is before querying it. Takes no arguments. "
-    "Returns one JSON object: {db_path, schema_version, languages (sorted list), "
-    "files_by_language, nodes_by_kind, edges_by_kind (each a count map by kind), "
-    "roots (the indexed source roots), branch and head_commit (the git state at "
-    "index time, or null)}."
-)
-_EXPORT_DESCRIPTION = (
-    "Use this to get access to the entire graph, for a whole-graph view or "
-    "offline processing. The graph itself is a {meta, nodes, edges} document "
-    "(meta is the same shape 'report' returns; nodes and edges are the "
-    "Cytoscape shape — each node has an 'id', each edge a 'source' and "
-    "'target'). "
-    "Arguments: 'out' chooses the output file path (otherwise a temp file is "
-    "written); 'inline' (default false) requests the graph inline. "
-    "Returns one JSON object. By default (and whenever the graph exceeds the "
-    "inline element cap) it writes the document to a file and returns a summary "
-    "{path, node_count, edge_count, meta} — NOT the graph inline, because a full "
-    "index is tens of megabytes, which an MCP response should not carry; when "
-    "'inline=true' is overridden by the cap, a 'note' explains the fallback. "
-    "With 'inline=true' on a small graph it returns {graph, node_count, "
-    "edge_count, meta} with the full document in 'graph'."
-)
+
+def _described(server: MCPServer) -> Callable:
+    """Register a tool whose client description is its own cleaned docstring.
+
+    The SDK uses ``fn.__doc__`` verbatim, and ruff indents a docstring's
+    continuation lines to the code block — so a raw docstring would leak that
+    indentation into the text a client reads. Running :func:`inspect.cleandoc`
+    over the docstring strips the common leading whitespace, letting each
+    tool's full, formatted docstring double as its advertised description with
+    no drift between the two.
+    """
+
+    def register(fn: Callable) -> Callable:
+        description = inspect.cleandoc(fn.__doc__ or "")
+        return server.tool(description=description)(fn)
+
+    return register
 
 
 def build_server(settings: Settings | None = None) -> MCPServer:
@@ -127,36 +88,137 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         ),
     )
 
-    @server.tool(description=_IMPACT_DESCRIPTION)
+    @_described(server)
     def impact(target: str, depth: int | None = None) -> dict:
-        """Transitive reverse-dependency set of a symbol or file path."""
+        """Use this to evaluate the implications of a change.
+
+        Returns the transitive reverse-dependency set of a symbol or file path:
+        everything that depends on the target, directly or indirectly, so you
+        can scope the blast radius before editing it.
+
+        Arguments:
+        - target: a dotted qualified name (e.g. ``pkg.module.Symbol``) or a file
+          path. A path seeds every node stored under it (the file plus the
+          symbols in it); a symbol is matched by exact qualified name first,
+          then by a best-effort suffix match.
+        - depth: optional cap on how many reverse hops to walk. ``depth=0``
+          yields no affected nodes; omit it to walk the full closure.
+
+        Returns one JSON object with:
+        - target: the target string, echoed back.
+        - resolved: the node(s) the target matched (empty when nothing matched).
+          Each node carries node_id, kind, name, qualified_name, path,
+          start_line, end_line, language.
+        - ambiguous: true when a symbol target matched more than one distinct
+          qualified name (the result then spans all of them).
+        - affected: the nodes that depend on the target, ordered by ascending
+          distance then path. Each item is {node, distance, resolution} where
+          distance is the shortest reverse-hop count from the target (always
+          >= 1, because the seeds themselves are distance 0 and never emitted),
+          and resolution is "exact" when the node is reached through exact binds
+          from an exact/seed origin, else "best_effort" (a node reached only via
+          a suffix-matched seed or a best-effort edge). exact wins an
+          equal-distance tie.
+        - affected_files: the sorted distinct paths of the affected nodes.
+
+        An unresolved target returns empty ``resolved`` and ``affected``.
+        """
         store = GraphStore(settings=resolved)
         try:
             return store.impact(target, depth=depth).model_dump()
         finally:
             store.close()
 
-    @server.tool(description=_EXPLAIN_DESCRIPTION)
+    @_described(server)
     def explain(target: str) -> dict:
-        """Structural neighbourhood of a symbol or file path."""
+        """Use this to review the structure around a given symbol or file.
+
+        Reach for this to understand a symbol or file in context — what it is
+        made of and how it connects — before changing or extending it.
+
+        Argument:
+        - target: a dotted qualified name (e.g. ``pkg.module.Symbol``) or a file
+          path, resolved the same way as ``impact``.
+
+        Returns one JSON object with:
+        - target: the target string, echoed back.
+        - resolved: the node(s) the target matched, in the same order as
+          ``explanations`` (empty when nothing matched).
+        - ambiguous: true when a symbol target matched more than one distinct
+          qualified name.
+        - explanations: one entry per resolved node, each with:
+          - node: the resolved node itself.
+          - defines: the symbols this node contains (a file/module/class's
+            members) — the one forward read of the ``defines`` relation.
+          - fan_out: its direct dependencies (nodes this one points to).
+          - fan_in: its direct dependents (nodes that point to this one).
+          - bases / subclasses: for a class node, its parent and child classes
+            via the inherits relation; empty for non-class nodes.
+          - fan_in_count / fan_out_count: the sizes of fan_in / fan_out.
+
+        An unresolved target returns empty ``resolved`` and ``explanations``.
+        """
         store = GraphStore(settings=resolved)
         try:
             return store.explain(target).model_dump()
         finally:
             store.close()
 
-    @server.tool(description=_REPORT_DESCRIPTION)
+    @_described(server)
     def report() -> dict:
-        """Introspect the index: db path, schema version, kinds, languages."""
+        """Use this to explore the metadata of the codebase index itself.
+
+        Introspects the index rather than the code; reach for this to learn what
+        the index contains and how big it is before querying it. Takes no
+        arguments.
+
+        Returns one JSON object with:
+        - db_path: the DuckDB file backing this index.
+        - schema_version: the index schema version (an integer).
+        - languages: the sorted list of languages present in the index.
+        - files_by_language: a map of language -> indexed file count.
+        - nodes_by_kind: a map of node kind (file, module, class, function,
+          import, page, heading, tag) -> count.
+        - edges_by_kind: a map of edge kind (defines, imports, calls, inherits,
+          references, links_to, embeds, tagged) -> count.
+        - roots: the indexed source root(s) — the configured root when set,
+          otherwise inferred from the stored file paths.
+        - branch / head_commit: the git branch and commit the index was built
+          from, or null when the source was not a git working tree.
+        """
         store = GraphStore(settings=resolved)
         try:
             return store.report().model_dump()
         finally:
             store.close()
 
-    @server.tool(description=_EXPORT_DESCRIPTION)
+    @_described(server)
     def export(out: str | None = None, inline: bool = False) -> dict:
-        """Export the whole graph as JSON; file handoff by default."""
+        """Use this to get access to the entire graph.
+
+        For a whole-graph view or offline processing. The graph document is
+        {meta, nodes, edges}: ``meta`` is the same shape ``report`` returns, and
+        ``nodes``/``edges`` use the Cytoscape shape — each node carries an
+        ``id`` (the renamed node_id) plus kind/name/qualified_name/path/
+        language/start_line/end_line, and each edge carries ``source`` and
+        ``target`` (the renamed src_id/dst_id) plus kind and resolution.
+
+        Arguments:
+        - out: output file path for the JSON document; when omitted a temp file
+          is written.
+        - inline: default false. When true, request the document inline rather
+          than via a file.
+
+        Returns one JSON object. By default — and whenever the graph exceeds the
+        inline element cap — it writes the document to a file and returns a
+        summary: {path (where the document was written), node_count, edge_count,
+        meta}. It does NOT inline the graph by default because a full index is
+        tens of megabytes, too large for an MCP response. When ``inline=true``
+        but the graph is over the cap, the same file summary is returned with an
+        extra ``note`` explaining the fallback. When ``inline=true`` and the
+        graph is small enough, it returns {graph (the full {meta, nodes, edges}
+        document), node_count, edge_count, meta}.
+        """
         store = GraphStore(settings=resolved)
         try:
             result = store.export()
