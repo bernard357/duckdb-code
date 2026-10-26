@@ -134,20 +134,35 @@ result set one row at a time.
 
 ## Measured scale of a large tree {#measured-scale}
 
-The `~/Public` evaluation, with the indexer's default ignore rules applied
-(`.git`, `node_modules`, `.venv`, build and cache directories pruned):
+A full index of `~/Public` (4.7 GB on disk, ~12 repositories) measured twice —
+once with root-only `.gitignore` handling, then again after nested `.gitignore`
+files were honored hierarchically:
 
 ```text
-tree size            : 4.7 GB on disk
-indexable files      : ~8,200  (~5,500 .py, ~2,650 .md, ~220 JS/TS)
-heaviest repositories: ~4,100 files and ~2,800 files
-projected graph size : ~90,000-110,000 nodes, ~150,000-250,000 edges
+                       root-only ignores   nested ignores honored   change
+files indexed          8,189               3,932                    -52%
+nodes                  172,805             61,811                   -64%
+edges                  1,211,129           174,548                  -86%
+  calls                607,482             82,203                   -86%
+  references           463,582             41,618                   -91%
+db size                251 MB              72 MB                    -71%
+index time             524 s               104 s                    -80%
 ```
 
-Projected node and edge counts are extrapolated from the measured small-graph
-ratios (roughly 10-13 nodes and 15-30 edges per file); the exact totals await a
-completed full index, which is itself gated on the set-based resolver above.
-These figures are illustrative of the order of magnitude, not a committed
-benchmark — the point is that a personal projects folder already reaches
-six-figure graph sizes, which is squarely the scale where the indexing and
-traversal decisions above stop being optional.
+__The ignore scope is a first-order correctness and performance lever, not a
+detail.__ Reading only the indexed root's `.gitignore` meant that, across a
+multi-repo tree, every repository's own ignore rules were invisible — so
+generated code, build output (`dist/`), vendored trees, and caches (e.g.
+`.vitepress/cache`) were parsed into the graph as noise. Honoring each
+directory's ignore files (patterns relative to their own directory, git
+semantics) removed over half the files and ~86% of the edges, cutting index
+time by 80% and the database by 71%. The remaining ~62k-node / ~175k-edge graph
+is the real code-and-docs structure of the tree, not an inflated one.
+
+Two lessons generalize: (1) a personal projects folder still reaches a
+six-figure graph, which is squarely where the indexing and traversal decisions
+above stop being optional; and (2) what you *exclude* can matter more than any
+engine optimization — the ~86% edge reduction here dwarfs the ~5.7x traversal
+speed-up, because the cheapest work is the work you never do. The traversal
+verdict above (`WITH RECURSIVE`) was measured on the larger pre-fix graph; it
+holds regardless, since it is a relative comparison on the same substrate.
