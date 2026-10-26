@@ -1,8 +1,10 @@
 """MCP-over-stdio server exposing duckdb-graph query tools.
 
 Any MCP client (Docker Agent, Claude Desktop, Claude Code, Cursor) can spawn
-``duckdb-graph mcp`` as a subprocess and call the ``impact``, ``explain``,
-and ``report`` tools. The server is built on the official ``mcp`` SDK.
+``duckdb-graph mcp`` as a subprocess and call the four tools ``impact``,
+``explain``, ``report``, and ``export``. The server also advertises a
+``description`` and ``instructions`` so a client can route to it and pick a
+tool by intent. The server is built on the official ``mcp`` SDK.
 
 Note on the import path: in the ``mcp`` 2.x SDK the server class is
 ``MCPServer`` (``from mcp.server.mcpserver import MCPServer``); its
@@ -32,6 +34,46 @@ from duckdb_graph.store import GraphStore
 # and inline is a bounded convenience for small graphs only.
 _INLINE_ELEMENT_CAP = 2000
 
+# The client-facing description each tool advertises. Kept as module constants
+# (passed explicitly to ``@server.tool(description=...)``) rather than drawn
+# from the function docstring: the SDK uses ``fn.__doc__`` verbatim, so a
+# docstring would leak the source indentation that ruff enforces into the text
+# a client reads. Each leads with the intent ("use this to …") so an agent can
+# route a task to the right tool.
+_IMPACT_DESCRIPTION = (
+    "Use this to evaluate the implications of a change. Returns the transitive "
+    "reverse-dependency set of a symbol or file path — everything that depends "
+    "on the target, directly or indirectly — so you can scope the blast radius "
+    "before editing it. Each affected node carries its distance from the target "
+    "and a resolution of 'exact' or 'best_effort'. 'depth' optionally caps how "
+    "many hops out to walk."
+)
+_EXPLAIN_DESCRIPTION = (
+    "Use this to review the structure around a given symbol or file. Returns the "
+    "structural neighbourhood of each resolved node: what it defines, its "
+    "fan-out (what it depends on) and fan-in (what depends on it), and — for a "
+    "class — its bases and subclasses. Reach for this to understand a symbol or "
+    "file in context before changing or extending it."
+)
+_REPORT_DESCRIPTION = (
+    "Use this to explore the metadata of the codebase index itself. Introspects "
+    "the index rather than the code: database path, schema version, the "
+    "languages present, the per-kind node and edge counts, and the indexed "
+    "roots. Reach for this to learn what the index contains and how big it is "
+    "before querying it."
+)
+_EXPORT_DESCRIPTION = (
+    "Use this to get access to the entire graph as JSON. Returns the whole graph "
+    "as a {meta, nodes, edges} document, for a whole-graph view or offline "
+    "processing. By default it writes the JSON to a file and returns a small "
+    "summary {path, node_count, edge_count, meta} — NOT the graph inline, "
+    "because a full index is tens of megabytes, which an MCP response should "
+    "not carry. Pass 'out' to choose the file path (otherwise a temp file is "
+    "written). Pass 'inline=true' to get the JSON directly in 'graph', but only "
+    "for a small graph (at or under the element cap); above the cap it falls "
+    "back to the path handoff and says so in 'note'."
+)
+
 
 def build_server(settings: Settings | None = None) -> MCPServer:
     """Build the MCP server and register the code-graph query tools.
@@ -42,9 +84,30 @@ def build_server(settings: Settings | None = None) -> MCPServer:
     :class:`GraphStore`.
     """
     resolved = settings or Settings()
-    server: MCPServer = MCPServer(name="duckdb-graph")
+    server: MCPServer = MCPServer(
+        name="duckdb-graph",
+        description=(
+            "Indexes the structure of a codebase into a local graph and answers "
+            "questions about the relationships across its symbols and files."
+        ),
+        instructions=(
+            "Use this server when a task needs the structure of the codebase or "
+            "the relationships between its symbols and files, rather than reading "
+            "files one at a time. Pick the tool by intent:\n"
+            "- `explain` — review the structure around a given symbol or file "
+            "(what it defines, what it depends on, what depends on it).\n"
+            "- `impact` — evaluate the implications of a change by finding "
+            "everything that transitively depends on a symbol or file.\n"
+            "- `report` — explore the metadata of the index itself (languages, "
+            "node/edge kinds and counts, roots).\n"
+            "- `export` — get access to the entire graph as JSON when a whole-"
+            "graph view or offline processing is needed.\n"
+            "Targets are a dotted qualified name (e.g. `pkg.module.Symbol`) or a "
+            "file path. The graph covers code and Markdown pages."
+        ),
+    )
 
-    @server.tool()
+    @server.tool(description=_IMPACT_DESCRIPTION)
     def impact(target: str, depth: int | None = None) -> dict:
         """Transitive reverse-dependency set of a symbol or file path."""
         store = GraphStore(settings=resolved)
@@ -53,7 +116,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         finally:
             store.close()
 
-    @server.tool()
+    @server.tool(description=_EXPLAIN_DESCRIPTION)
     def explain(target: str) -> dict:
         """Structural neighbourhood of a symbol or file path."""
         store = GraphStore(settings=resolved)
@@ -62,7 +125,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         finally:
             store.close()
 
-    @server.tool()
+    @server.tool(description=_REPORT_DESCRIPTION)
     def report() -> dict:
         """Introspect the index: db path, schema version, kinds, languages."""
         store = GraphStore(settings=resolved)
@@ -71,18 +134,9 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         finally:
             store.close()
 
-    @server.tool()
+    @server.tool(description=_EXPORT_DESCRIPTION)
     def export(out: str | None = None, inline: bool = False) -> dict:
-        """Export the whole graph as JSON ({meta, nodes, edges}).
-
-        By default writes the JSON to a file and returns a small summary
-        ``{path, node_count, edge_count, meta}`` — NOT the graph inline, because
-        a full index is tens of megabytes, which an MCP response should not
-        carry. Pass ``out`` to choose the file path (otherwise a temp file is
-        written). Pass ``inline=True`` to get the JSON directly in ``graph``,
-        but only for a small graph (at or under the element cap); above the cap
-        it falls back to the path handoff and says so in ``note``.
-        """
+        """Export the whole graph as JSON; file handoff by default."""
         store = GraphStore(settings=resolved)
         try:
             result = store.export()

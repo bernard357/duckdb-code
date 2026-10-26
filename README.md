@@ -207,12 +207,15 @@ query", use the sibling
 
 ## MCP tool
 
-`duckdb-graph mcp` is an MCP-over-stdio server exposing three query tools:
+`duckdb-graph mcp` is an MCP-over-stdio server exposing four query tools:
 
 - `impact(target, …)` — transitive reverse-dependency set for a symbol or file.
 - `explain(target, …)` — structural neighbourhood of a symbol or file.
 - `report()` — introspects the index: database path, schema version, languages,
   and node/edge counts.
+- `export(out=…, inline=…)` — returns the whole graph as `{meta, nodes, edges}`
+  JSON, writing it to a file and returning a summary by default (inline only for
+  a small graph).
 
 An MCP client spawns `duckdb-graph mcp` as a child process in the same
 container and talks to it over stdin/stdout; stdio is a same-container
