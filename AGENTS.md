@@ -1,111 +1,42 @@
 # AGENTS.md — adopting and developing duckdb-graph
 
-`duckdb-graph` is a frugal, embeddable code-graph building block for agentic systems: tree-sitter impact analysis and structure explanation over a local DuckDB file, no external service. This file serves two audiences: an agent **adopting** the package in its own project (first half), and an agent or agentic IDE **working in this repository** (second half).
+`duckdb-graph` is a frugal, embeddable code-graph building block for agentic systems: tree-sitter impact analysis and structure explanation over a local DuckDB file, no external service. This file is for agents: an agent __adopting__ the package in its own project, and an agent or agentic IDE __working in this repository__. For the product story, the SDK and CLI usage, and the full MCP reference, read [README.md](https://github.com/bernard357/duckdb-graph/blob/main/README.md) — this file points there rather than repeating it, so the two never drift.
 
-## Install for using the package
+## Adopting the package
 
-```shell
-$ pip install duckdb-graph
-```
+- __Install and run.__ `uvx duckdb-graph …` runs it with nothing installed first; `uv tool install duckdb-graph` puts it on `PATH`; `pip install duckdb-graph` is the alternative. See [Install and run](https://github.com/bernard357/duckdb-graph/blob/main/README.md#install-and-run).
+- __SDK.__ Open a `GraphStore` on a local `.duckdb` file and call `impact` / `explain` / `report`; the store always opens read-write. See [SDK entry point](https://github.com/bernard357/duckdb-graph/blob/main/README.md#sdk-entry-point).
+- __Indexing.__ `store.index(folder)` / `duckdb-graph index <folder>` is incremental by default (etag-driven; a no-change re-index is a no-op) and also indexes Markdown pages into the same graph. See [Indexing from the CLI](https://github.com/bernard357/duckdb-graph/blob/main/README.md#indexing-from-the-cli) and [Indexing a folder of Markdown pages](https://github.com/bernard357/duckdb-graph/blob/main/README.md#indexing-a-folder-of-markdown-pages).
+- __Keeping the graph fresh.__ `duckdb-graph watch <folder>` re-indexes incrementally on every change, and `duckdb-graph mcp --index <folder>` folds a startup build into the server — so an agentic IDE queries the working tree as it is now. See [Keeping the graph fresh in an agentic IDE](https://github.com/bernard357/duckdb-graph/blob/main/README.md#keeping-the-graph-fresh-in-an-agentic-ide).
+- __MCP.__ `duckdb-graph mcp` serves four tools — `impact`, `explain`, `report`, and `export` — over stdio and Streamable HTTP, each returning a single JSON object. See [MCP tool](https://github.com/bernard357/duckdb-graph/blob/main/README.md#mcp-tool).
+- __Semantic search is out of scope.__ For "what text is semantically near this query", use the sibling [`duckdb-vectors`](https://github.com/bernard357/duckdb-vectors); this package answers structural, link-based questions only.
 
-## SDK entry point
+## Working in this repository
 
-Open a store against a local `.duckdb` file and query it. The store always opens read-write, since incremental updates are the rule for this package:
+### How to implement changes
 
-```python
-from duckdb_graph import GraphStore
+Prefer implementing single-file or single-module changes inline — edit the files directly against the existing `.venv`, run `make lint` / `make test` / `make self-test` to verify, and commit. Reserve a full multi-step workflow (worktree, planner, implement-and-review loop) for multi-file or genuinely high-risk work (new architecture, cross-cutting refactors, schema or resolver changes). The verification gate is non-negotiable either way: never claim a change works without running the lint/test/self-test gate and, for a behavioral change, an end-to-end check. Flag when a task looks borderline so a reviewed workflow can be chosen deliberately.
 
-store = GraphStore(db_path="graph.duckdb")
+### The Makefile is the toolbox
 
-result = store.impact("payments.charge.Charge")
-for hit in result.affected:
-    print(hit.distance, hit.resolution, hit.node.qualified_name)
-```
+Drive common tasks through `make`; do not call the underlying tools directly. Run `make` for the full list. The essentials:
 
-`impact` returns the affected set with per-node distance and resolution; `explain` returns a node's structural neighbourhood; `report` introspects the index.
-
-The graph also indexes a folder of Markdown pages: every `.md` / `.markdown` file becomes a `page` node with `heading` and `tag` nodes, and `[text](other.md)` links, `[[Wikilinks]]`, and image embeds become `links_to` / `embeds` edges. The same queries then answer knowledge-graph questions — `impact` on a page is what-links-here, `explain` on a page is its inbound/outbound links plus heading structure, an empty `impact` marks an orphan page, and `report` counts pages, headings, tags, and link edges. Code and Markdown stay in separate domains (a Markdown link never binds to a code symbol and vice versa). Semantic / vector search is out of scope — for "what text is semantically near this query", use the sibling [`duckdb-vectors`](https://github.com/bernard357/duckdb-vectors) package.
-
-`store.index(folder)` (and `duckdb-graph index <folder>`) is incremental-by-default: a full rebuild runs when the database is empty or `rebuild=True` / `--rebuild` is passed, and otherwise only changed, added, and deleted files are reconciled. Change detection is etag-driven — each file's stored `etag` is compared against a freshly computed `compute_etag` fingerprint, the changed/added/deleted set is reconciled, and the global cross-file resolution is re-run so edges binding to a changed file are re-resolved. A no-change re-index is a no-op, and the incremental result is identical to a full rebuild of the same on-disk state.
-
-## MCP tool
-
-`duckdb-graph mcp` is an MCP-over-stdio server exposing three query tools:
-
-- `impact(target, …)` — transitive reverse-dependency set for a symbol or file.
-- `explain(target, …)` — structural neighbourhood of a symbol or file.
-- `report()` — introspects the index: database path, schema version, languages, and node/edge counts.
-
-An MCP client spawns `duckdb-graph mcp` as a child process in the same container and talks to it over stdin/stdout; stdio is a same-container transport, not a network protocol.
-
-Pass `--index <folder>` (or set `DUCKDB_GRAPH_ROOT`) to index that folder on startup before serving — give the MCP server the source folder, not just a prebuilt database. The startup build is incremental (full when the database is empty, otherwise only changed files are reconciled), progress goes to stderr, and a failed build aborts startup. Pass `--no-startup-index`, or a bare `--db` with no folder configured, to serve a prebuilt database as a frozen snapshot; it is a one-shot startup build, not a watcher.
-
-The server also serves over **Streamable HTTP** with `--transport http`:
-
-```shell
-$ duckdb-graph mcp                                   # stdio (default)
-$ duckdb-graph mcp --transport http                  # http on 127.0.0.1:8000/mcp
-$ duckdb-graph mcp --transport http --host 127.0.0.1 --port 8000
-```
-
-HTTP binds loopback `127.0.0.1:8000` at path `/mcp` by default; `--host` and `--port` override it. Both transports expose the identical `impact`, `explain`, and `report` tools with the same JSON-object shapes. The HTTP transport is the groundwork that will later let a client index a repository in a separate sandbox (for example a GitHub repository); that remote / sandbox indexing is **future work this transport enables**, not something shipped here.
-
-## Setup for working on the package itself
-
-Requirements:
-
-- Python 3.12+
-- [`uv`](https://docs.astral.sh/uv/) (Python env and builds)
-
-Shell commands:
-
-```shell
-$ make setup     # install the Python toolchain into a local venv
-$ make test      # run the test suite
-$ make lint      # ruff, mypy, markdownlint
-```
-
-## For AI agents: how to implement changes
-
-Prefer implementing single-file or single-module changes inline — edit the
-files directly against the existing `.venv`, run `make lint` / `make test` /
-`make self-test` to verify, and commit. Reserve a full multi-step workflow
-(worktree, planner, implement-and-review loop) for multi-file or genuinely
-high-risk work (new architecture, cross-cutting refactors, schema or resolver
-changes). The verification gate is non-negotiable either way: never claim a
-change works without running the lint/test/self-test gate and, for a
-behavioral change, an end-to-end check. Flag when a task looks borderline so a
-reviewed workflow can be chosen deliberately.
-
-## The Makefile is the toolbox
-
-Drive common tasks through `make`; do not call the underlying tools directly:
-
-- `make` - list common targets
-- `make setup` — check and install the development toolchain
-- `make lint` / `make format` — check / apply ruff, mypy, markdownlint.
+- `make setup` — check prerequisites (Python 3.12+, `uv`) and install the toolchain into a local `.venv`.
+- `make lint` / `make format` — check / apply ruff, mypy, and markdownlint.
 - `make test` — run the pytest suite.
-- `make build` — build the wheel and sdist (version from the git tag via hatch-vcs).
+- `make self-test` — capability evidence: index the package's own source and run labelled requests, each asserting a structural fact.
+- `make build` / `make build-documentation` — build the wheel + sdist / the VitePress docs site.
 
-## Project structure
+Invoke venv binaries directly (`.venv/bin/python`, `.venv/bin/pytest`, `.venv/bin/ruff`); do not activate the venv.
 
-```text
-duckdb-graph/
-├── src/duckdb_graph/   # the package
-│   ├── store.py            # the GraphStore API
-│   ├── indexer.py          # folder → DuckDB graph index
-│   ├── cli.py              # the duckdb-graph CLI (incl. the mcp verb)
-│   ├── mcp_server.py       # the MCP-over-stdio server
-│   ├── config.py           # Settings / DUCKDB_GRAPH_* env
-│   ├── models.py           # Node / Edge / ImpactResult pydantic models
-│   ├── etag.py             # compute_etag content fingerprint
-│   └── extractors/         # pluggable extractors (python, javascript/typescript, markdown)
-├── tests/                  # pytest suite
-├── pyproject.toml          # metadata, deps, tag-driven version (hatch-vcs)
-└── Makefile                # the task toolbox
-```
+### Repository layout
 
-`.md` / `.markdown` files index into the same graph as code. Releases are tag-driven: the version comes from the git `vYYMMDD` tag, and pushing a tag publishes to PyPI.
+The package lives in `src/duckdb_graph/`: `store.py` (the `GraphStore` API), `indexer.py` (folder → graph), `cli.py` (the CLI, incl. the `index`, `watch`, and `mcp` verbs), `watcher.py` (the `watch` loop), `mcp_server.py` (the MCP server), `config.py` (`Settings` / `DUCKDB_GRAPH_*`), `models.py` (pydantic models), `etag.py` (`compute_etag`), and `extractors/` (python, javascript/typescript, markdown). Tests are in `tests/`. See [Project structure](https://github.com/bernard357/duckdb-graph/blob/main/README.md#project-structure) for the annotated tree.
+
+### Conventions
+
+- Markdown is linted by markdownlint (`make lint`): use underscores for emphasis (`_text_`), not asterisks.
+- Releases are tag-driven: the version comes from the git `vYYMMDD` tag via hatch-vcs, and pushing a tag publishes to PyPI.
 
 ## Pointers
 
