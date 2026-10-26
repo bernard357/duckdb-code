@@ -76,9 +76,11 @@ graph, so it never descends into dependency or build trees:
   `.mypy_cache`, `.pytest_cache`, and `.ruff_cache`;
 - files larger than 1 MB (1,000,000 bytes — a file of exactly that size is
   kept);
-- anything matched by the indexed folder's `.gitignore` or an optional
-  `.duckdbgraphignore` (gitignore syntax, applied relative to the folder; a
-  missing file is a no-op).
+- anything matched by a `.gitignore` or an optional `.duckdbgraphignore`,
+  honored hierarchically like git: every directory's ignore files apply to that
+  directory and its descendants (patterns relative to the file's own
+  directory), so nested ignore files — e.g. a per-repo `.gitignore` under an
+  indexed parent — are respected, not only one at the indexed root.
 
 Pass `--no-default-ignores` (CLI) or `use_default_ignores=False` (SDK) to
 disable the built-in directory and size exclusions when you do want a vendored

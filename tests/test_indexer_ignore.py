@@ -128,3 +128,60 @@ def test_markdown_corpus_indexed_while_sibling_git_is_excluded(tmp_path):
     assert "guide.md" in paths
     assert not any(p.startswith(".git/") for p in paths)
     store.close()
+
+
+def test_nested_gitignore_is_honored(tmp_path):
+    """A .gitignore in a SUBDIRECTORY excludes its matches, not only a root one.
+
+    This is the ~/Public leak: indexing a parent of a repo whose own .gitignore
+    ignores a build-cache dir. The parent has no rule for it, so only a nested
+    .gitignore can exclude it. The old single-root spec missed this entirely.
+    """
+    root = tmp_path / "root"
+    # Sub-repo A: its own .gitignore excludes cache/, which root does not know.
+    repo_a = root / "repo_a"
+    (repo_a / "cache").mkdir(parents=True)
+    (repo_a / ".gitignore").write_text("cache/\n")
+    (repo_a / "app.py").write_text("def app():\n    return 1\n")
+    (repo_a / "cache" / "junk.py").write_text("def junk():\n    return 0\n")
+    # Sub-repo B: a different nested ignore (a specific file by name).
+    repo_b = root / "repo_b"
+    repo_b.mkdir()
+    (repo_b / ".gitignore").write_text("secret.py\n")
+    (repo_b / "lib.py").write_text("def lib():\n    return 2\n")
+    (repo_b / "secret.py").write_text("TOKEN = 1\n")
+    # Root has no .gitignore at all.
+
+    store = _store(tmp_path)
+    try:
+        index_folder(store, root)
+        paths = _node_paths(store)
+    finally:
+        store.close()
+
+    # Nested-ignored files are excluded...
+    assert not any("cache/junk.py" in p for p in paths), paths
+    assert not any("secret.py" in p for p in paths), paths
+    # ...while the real source in each sub-repo is kept.
+    assert any(p.endswith("repo_a/app.py") for p in paths), paths
+    assert any(p.endswith("repo_b/lib.py") for p in paths), paths
+
+
+def test_nested_duckdbgraphignore_is_honored(tmp_path):
+    """A nested .duckdbgraphignore is honored like a nested .gitignore."""
+    root = tmp_path / "root"
+    sub = root / "pkg"
+    (sub / "generated").mkdir(parents=True)
+    (sub / ".duckdbgraphignore").write_text("generated/\n")
+    (sub / "real.py").write_text("def real():\n    return 1\n")
+    (sub / "generated" / "gen.py").write_text("def gen():\n    return 0\n")
+
+    store = _store(tmp_path)
+    try:
+        index_folder(store, root)
+        paths = _node_paths(store)
+    finally:
+        store.close()
+
+    assert not any("generated/gen.py" in p for p in paths), paths
+    assert any(p.endswith("pkg/real.py") for p in paths), paths

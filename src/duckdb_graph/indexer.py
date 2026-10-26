@@ -599,12 +599,12 @@ def _extract_folder(
     all_edges: list[Edge] = []
     languages: dict[str, int] = {}
 
-    ignore_spec = _build_ignore_spec(folder)
+    ignore_scope = _IgnoreScope(folder)
     paths, skipped = _iter_files(
         folder,
         recursive,
         use_default_ignores=use_default_ignores,
-        ignore_spec=ignore_spec,
+        ignore_scope=ignore_scope,
     )
 
     for abs_path in paths:
@@ -766,19 +766,18 @@ def _noop_report(store: GraphStore, skipped: int, *, mode: str) -> IndexReport:
     )
 
 
-def _build_ignore_spec(folder: Path) -> "pathspec.PathSpec | None":
-    """Build a combined gitignore matcher from the folder's ignore files.
+def _dir_ignore_spec(directory: Path) -> "pathspec.PathSpec | None":
+    """Compile the ``.gitignore``/``.duckdbgraphignore`` in ONE directory.
 
-    Reads ``<folder>/.gitignore`` and ``<folder>/.duckdbgraphignore`` when
-    present (each optional; a missing file contributes no patterns), concatenates
-    their lines, and returns a ``gitignore`` :class:`pathspec.PathSpec`
-    applied relative to ``folder``. Returns ``None`` when neither file exists or
-    they yield no patterns, so the walk skips the matcher entirely. ``pathspec``
-    is imported lazily so a folder with no ignore file pays no import cost.
+    Reads only ``<directory>/.gitignore`` and ``<directory>/.duckdbgraphignore``
+    (each optional). Returns a ``gitignore`` :class:`pathspec.PathSpec` whose
+    patterns are anchored to ``directory`` — the caller matches paths relative
+    to that directory — or ``None`` when the directory has no ignore patterns.
+    ``pathspec`` is imported lazily so a tree with no ignore file pays nothing.
     """
     lines: list[str] = []
     for name in _IGNORE_FILES:
-        ignore_file = folder / name
+        ignore_file = directory / name
         if not ignore_file.is_file():
             continue
         try:
@@ -795,15 +794,64 @@ def _build_ignore_spec(folder: Path) -> "pathspec.PathSpec | None":
     return spec if spec.patterns else None
 
 
-def _dir_is_ignored(rel: str, ignore_spec: "pathspec.PathSpec | None") -> bool:
-    """Return ``True`` when the folder-relative dir path matches the spec.
+class _IgnoreScope:
+    """Hierarchical gitignore matcher over a tree rooted at ``root``.
 
-    gitignore matches files, so a directory is tested both as ``rel`` and as
-    ``rel + "/"`` to cover both ``dir`` and ``dir/`` ignore patterns.
+    Git's gitignore is hierarchical: a ``.gitignore`` applies to its own
+    directory and all descendants, with patterns relative to that file's
+    location. This loads each directory's ignore files lazily (once, when first
+    reached) and tests a path against every ANCESTOR directory's spec, matching
+    the path re-based to each spec's own directory. A single root-only spec (the
+    former behaviour) missed nested ``.gitignore`` files entirely — e.g.
+    indexing a parent of several repos ignored none of their per-repo rules.
     """
-    if ignore_spec is None:
+
+    def __init__(self, root: Path) -> None:
+        self._root = root
+        # abs directory -> compiled spec or None (cached, including the misses)
+        self._specs: dict[Path, pathspec.PathSpec | None] = {}
+
+    def _spec_for(self, directory: Path) -> "pathspec.PathSpec | None":
+        if directory not in self._specs:
+            self._specs[directory] = _dir_ignore_spec(directory)
+        return self._specs[directory]
+
+    def _ancestor_dirs(self, directory: Path) -> list[Path]:
+        """Return ``directory`` and each ancestor up to (and including) root."""
+        dirs = [directory]
+        current = directory
+        while current != self._root:
+            current = current.parent
+            dirs.append(current)
+            if current == self._root:
+                break
+        return dirs
+
+    def is_ignored(self, path: Path, *, is_dir: bool) -> bool:
+        """Return ``True`` when ``path`` matches any in-scope ancestor spec.
+
+        ``path`` is an absolute path under ``root``. Each ancestor directory's
+        spec is tested with ``path`` made relative to THAT directory; a
+        directory is tested both bare and with a trailing ``/`` so ``dir`` and
+        ``dir/`` patterns both match. The containing directory for an ancestor
+        lookup is the path's parent (a file is governed by its directory's and
+        all parent directories' ignore files).
+        """
+        parent = path if is_dir else path.parent
+        # Walk from the path's directory up to root, testing each level's spec.
+        for ancestor in self._ancestor_dirs(parent):
+            spec = self._spec_for(ancestor)
+            if spec is None:
+                continue
+            try:
+                rel = path.relative_to(ancestor).as_posix()
+            except ValueError:  # pragma: no cover - path not under ancestor
+                continue
+            if spec.match_file(rel):
+                return True
+            if is_dir and spec.match_file(f"{rel}/"):
+                return True
         return False
-    return ignore_spec.match_file(rel) or ignore_spec.match_file(f"{rel}/")
 
 
 def _iter_files(
@@ -811,7 +859,7 @@ def _iter_files(
     recursive: bool,
     *,
     use_default_ignores: bool = True,
-    ignore_spec: "pathspec.PathSpec | None" = None,
+    ignore_scope: "_IgnoreScope | None" = None,
 ) -> tuple[list[Path], int]:
     """Walk ``folder`` with directory pruning, returning kept files and a count.
 
@@ -826,32 +874,33 @@ def _iter_files(
     directory set (:data:`_DEFAULT_IGNORED_DIRS`) is pruned and files strictly
     larger than :data:`_DEFAULT_MAX_FILE_BYTES` (1 MB; the bound is exclusive, so
     a file of exactly 1_000_000 bytes is kept) are dropped. When ``False`` those
-    two rules are skipped, but ``ignore_spec`` (the ``.gitignore`` /
-    ``.duckdbgraphignore`` matcher) is still honored in both cases. When
-    ``recursive`` is ``False`` only the top folder's files are returned.
+    two rules are skipped, but ``ignore_scope`` (the hierarchical ``.gitignore``
+    / ``.duckdbgraphignore`` matcher) is still honored in both cases — it tests
+    each path against every ancestor directory's ignore files, so nested ignore
+    files are respected, not only one at ``folder``. When ``recursive`` is
+    ``False`` only the top folder's files are returned.
     """
     kept: list[Path] = []
     excluded = 0
 
     for dirpath, dirnames, filenames in os.walk(folder):
-        dir_rel = Path(dirpath).relative_to(folder)
+        dir_abs = Path(dirpath)
 
         pruned: list[str] = []
         for name in dirnames:
             if use_default_ignores and name in _DEFAULT_IGNORED_DIRS:
                 continue
-            child_rel = (dir_rel / name).as_posix()
-            if _dir_is_ignored(child_rel, ignore_spec):
+            child = dir_abs / name
+            if ignore_scope is not None and ignore_scope.is_ignored(child, is_dir=True):
                 continue
             pruned.append(name)
         dirnames[:] = pruned
 
         for name in filenames:
-            path = Path(dirpath) / name
+            path = dir_abs / name
             if not path.is_file():
                 continue
-            rel = (dir_rel / name).as_posix()
-            if ignore_spec is not None and ignore_spec.match_file(rel):
+            if ignore_scope is not None and ignore_scope.is_ignored(path, is_dir=False):
                 excluded += 1
                 continue
             if use_default_ignores and path.stat().st_size > _DEFAULT_MAX_FILE_BYTES:
