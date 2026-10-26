@@ -16,6 +16,37 @@ this code". The must-be-reliable deliverable is `impact`: a transitive
 reverse-dependency set over the edge graph, with every best-effort edge flagged
 rather than silently dropped.
 
+## Install and run
+
+With [uv](https://docs.astral.sh/uv/), there is nothing to install first.
+Run the tool with `uvx` and uv fetches the package and its dependencies on the
+first call and reuses the cache after:
+
+```shell
+$ uvx duckdb-graph --help                 # run without installing
+$ uvx duckdb-graph index ./my-project     # index a folder
+```
+
+For a persistent `duckdb-graph` on your `PATH` (handy when an MCP client config
+wants an absolute command path), install it as a uv tool:
+
+```shell
+$ uv tool install duckdb-graph
+$ duckdb-graph --help
+```
+
+Prefer `pip`? `pip install duckdb-graph` into a virtual environment works the
+same way.
+
+Until the PyPI release is published (or any time you want an unreleased build),
+run straight from a git ref or a local checkout — the same commands, with
+`--from`:
+
+```shell
+$ uvx --from git+https://github.com/bernard357/duckdb-graph duckdb-graph --help
+$ uvx --from /path/to/duckdb-graph duckdb-graph --help   # from a local clone
+```
+
 ## SDK entry point
 
 Open a store against a local `.duckdb` file and query it. The store always

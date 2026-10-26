@@ -50,52 +50,59 @@ about.
 
 ## 2. Install duckdb-graph locally {#stage-2}
 
-Install from PyPI:
-
-```shell
-$ pip install duckdb-graph
-```
-
-Or run it without installing, using [uv](https://docs.astral.sh/uv/):
+With [uv](https://docs.astral.sh/uv/) there is nothing to install first: `uvx`
+fetches the package and its dependencies on the first run and reuses them after,
+so the MCP command in stage 4 can be a single `uvx duckdb-graph mcp …` with no
+prior setup step. Run it once to confirm it resolves:
 
 ```shell
 $ uvx duckdb-graph --help
 ```
 
-__Installing from a local clone.__ Until the PyPI release is published — or any
-time you want to run an unreleased build — install from a checkout of the
-repository instead. An editable install links to the source so local edits take
-effect without reinstalling:
+For a persistent `duckdb-graph` on `PATH` — which gives Kilo Code an absolute
+command path to point at — install it as a uv tool instead:
 
 ```shell
-$ git clone https://github.com/bernard357/duckdb-graph.git
-$ pip install -e duckdb-graph
-```
-
-Or run it straight from the clone without installing, via uv:
-
-```shell
-$ uvx --from ./duckdb-graph duckdb-graph --help
-```
-
-The version resolves from the git tag (via `hatch-vcs`); a clone with no release
-tag yet reports a development version like `0.1.devN+g<commit>`, which is
-expected and does not affect functionality.
-
-Verify the console script resolves and shows the six verbs
-(`index`, `report`, `impact`, `explain`, `export`, `mcp`):
-
-```shell
+$ uv tool install duckdb-graph
 $ duckdb-graph --help
 ```
 
-Note the __absolute path__ of the `duckdb-graph` executable — Kilo Code needs it
-in stage 4:
+(`pip install duckdb-graph` into a virtual environment is the non-uv
+equivalent.)
+
+__Running from a local clone.__ Until the PyPI release is published — or any
+time you want an unreleased build — run from a checkout of the repository. With
+uv, point `--from` at the clone (or a git ref); nothing is installed:
+
+```shell
+$ git clone https://github.com/bernard357/duckdb-graph.git
+$ uvx --from ./duckdb-graph duckdb-graph --help
+$ uvx --from git+https://github.com/bernard357/duckdb-graph duckdb-graph --help
+```
+
+An editable `pip install -e duckdb-graph` also works and links to the source so
+local edits take effect without reinstalling. The version resolves from the git
+tag (via `hatch-vcs`); a clone with no release tag yet reports a development
+version like `0.1.devN+g<commit>`, which is expected and does not affect
+functionality.
+
+Verify the console script resolves and shows the seven verbs
+(`index`, `watch`, `report`, `impact`, `explain`, `export`, `mcp`):
+
+```shell
+$ uvx duckdb-graph --help
+```
+
+If you chose `uv tool install` (or `pip`), note the __absolute path__ of the
+`duckdb-graph` executable — Kilo Code can use it in stage 4:
 
 ```shell
 $ which duckdb-graph
 /Users/you/.local/bin/duckdb-graph
 ```
+
+With `uvx`, the stage-4 command is simply `uvx` with `duckdb-graph mcp …` as its
+arguments — no absolute path needed.
 
 ## 3. Index the workspace {#stage-3}
 
@@ -164,8 +171,13 @@ choose __Local (stdio)__. Enter:
 | Field | Value |
 | --- | --- |
 | Name | `duckdb-graph` |
-| Command | the absolute path from `which duckdb-graph` (e.g. `/Users/you/.local/bin/duckdb-graph`) |
-| Arguments | `mcp`, `--db`, `/Users/you/projects/my-app/.duckdb-graph/graph.duckdb`, `--index`, `/Users/you/projects/my-app` |
+| Command | `uvx` (no install), or the absolute path from `which duckdb-graph` if you used `uv tool install` / `pip` (e.g. `/Users/you/.local/bin/duckdb-graph`) |
+| Arguments | with `uvx`: `duckdb-graph`, `mcp`, `--db`, `/Users/you/projects/my-app/.duckdb-graph/graph.duckdb`, `--index`, `/Users/you/projects/my-app` — with the absolute path, drop the leading `duckdb-graph` |
+
+With `uvx` as the command, the first argument is `duckdb-graph` (the package to
+run), then the verb and its options; uv fetches and caches the package on first
+launch, so there is no install step. With an absolute executable path, omit
+that leading `duckdb-graph` argument.
 
 Pass `--index <workspace>` so the server indexes the workspace on startup: the
 graph is built when the database is empty and refreshed incrementally
@@ -178,7 +190,28 @@ resolve.
 
 The equivalent JSON (Kilo Code writes this for you; shown for reference — the
 exact shape varies by Kilo Code version, so prefer the UI and treat this as
-illustrative):
+illustrative). With `uvx` — nothing installed ahead of time:
+
+```json
+{
+  "mcp": {
+    "duckdb-graph": {
+      "type": "local",
+      "command": [
+        "uvx",
+        "duckdb-graph",
+        "mcp",
+        "--db",
+        "/Users/you/projects/my-app/.duckdb-graph/graph.duckdb",
+        "--index",
+        "/Users/you/projects/my-app"
+      ]
+    }
+  }
+}
+```
+
+Or, with a `uv tool install`ed (or `pip`-installed) absolute executable path:
 
 ```json
 {

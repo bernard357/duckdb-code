@@ -112,6 +112,14 @@ package with the dev extra) and `setup-markdownlint` (npm). Run
 `make setup-python` for just the Python environment if you manage the linters
 yourself.
 
+`make setup` is the __contributor__ path: an editable install with the dev
+extras (ruff, mypy, pytest) for running the suite and the linters. It is
+distinct from the __end-user__ install story, which is `uvx duckdb-graph` (or
+`uv tool install duckdb-graph`) and pulls only the runtime dependencies on
+demand — see the [README](https://github.com/bernard357/duckdb-graph#install-and-run)
+and the [Kilo Code runbook](setup-kilo-code-runbook.md). Reach for `make setup`
+when you are changing the package, not when you are only running it.
+
 ## What does the lint cover?
 
 ```shell
