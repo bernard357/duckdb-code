@@ -84,7 +84,10 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             "graph view or offline processing is needed.\n"
             "Targets are a dotted qualified name (e.g. `pkg.module.Symbol`) or a "
             "file path. The graph covers code and Markdown pages. Every tool "
-            "returns a single JSON object."
+            "returns a single JSON object, and every result carries a path and "
+            "line range so you can hand a precise follow-up to a language "
+            "server: this server answers where in the repo and what's at stake, "
+            "not what exactly is at a cursor position."
         ),
     )
 

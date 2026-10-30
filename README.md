@@ -217,6 +217,14 @@ query", use the sibling
   JSON, writing it to a file and returning a summary by default (inline only for
   a small graph).
 
+These four are the first slice of a larger, LSP-complementary tool contract:
+whole-repo, precomputed questions (intent search, one-call impact,
+cross-boundary links, history) that a Language Server structurally can't
+answer, while point queries (definition, references, hover, rename,
+diagnostics) stay with the LSP — every result carries `path + range` for the
+hand-off. The full target surface, each tool's JSON shape, and the build order
+are in the [MCP tool contract](documentation/mcp-contract-guide.md).
+
 An MCP client spawns `duckdb-code mcp` as a child process in the same
 container and talks to it over stdin/stdout; stdio is a same-container
 transport, not a network protocol.

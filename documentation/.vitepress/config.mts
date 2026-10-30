@@ -54,6 +54,10 @@ export default withMermaid(
               link: '/indexing-strategy-workbook',
             },
             {
+              text: 'MCP tool contract',
+              link: '/mcp-contract-guide',
+            },
+            {
               text: 'Foster adoption',
               link: '/register-package-procedure',
             },
