@@ -65,6 +65,17 @@ _MARKDOWN_TAG_KIND = "tagged"
 # The stored-path suffixes a Markdown link target may point at a page by.
 _MARKDOWN_EXTENSIONS = (".md", ".markdown")
 
+# Edge kinds a test's reachability is derived from: what a test calls, imports,
+# or references is what it exercises. ``inherits`` is excluded (a test class
+# subclassing a base does not "test" the base) and ``defines`` is structural.
+_TEST_REACH_KINDS = frozenset({"calls", "references", "imports"})
+
+# A path is a test file when its basename matches ``test_*`` / ``*_test`` (any
+# extension) or ``*.test.*`` / ``*.spec.*``, or when any path segment is a
+# conventional test directory. Mirrors the pytest / jest / vitest conventions
+# the supported languages use.
+_TEST_DIR_SEGMENTS = frozenset({"tests", "test", "__tests__", "spec", "__mocks__"})
+
 # Directories never descended into by default (pruned in place during the walk
 # by exact basename). The whole subtree is skipped, so nothing under them is
 # ever stat'd, read, or counted — a pruned tree contributes 0 to every counter.
@@ -252,6 +263,68 @@ def resolve_edges(nodes: list[Node], edges: list[Edge]) -> list[Edge]:
     resolved.extend(_resolve_markdown_tags(nodes, edges, node_by_id))
 
     return resolved
+
+
+def _is_test_path(path: str) -> bool:
+    """Classify a stored path as a test file by naming/location convention.
+
+    True when the basename matches ``test_*``/``*_test`` (any extension) or
+    carries a ``.test.``/``.spec.`` infix, or when any directory segment is a
+    conventional test directory (``tests``, ``__tests__``, ``spec``, ...).
+    """
+    pure = PurePosixPath(path)
+    segments = pure.parts[:-1]
+    if any(seg in _TEST_DIR_SEGMENTS for seg in segments):
+        return True
+    stem = pure.name
+    # Strip all extensions so ``foo.test.ts`` -> ``foo.test`` -> ``foo``.
+    base = stem.split(".", 1)[0]
+    if base.startswith("test_") or base.endswith("_test"):
+        return True
+    return ".test." in stem or ".spec." in stem
+
+
+def enrich_test_edges(nodes: list[Node], resolved: list[Edge]) -> list[Edge]:
+    """Derive ``tests`` edges from the resolved graph (no extra parsing).
+
+    A test "tests" the non-test symbols it reaches: for every resolved
+    ``calls``/``references``/``imports`` edge whose source is a symbol in a test
+    file and whose target is a symbol in a NON-test file, emit one ``tests``
+    edge from the test source to that target. The edge inherits the reach
+    edge's confidence (the test's knowledge of the target is exactly as certain
+    as the bind that connects them). Deduplicated per ``(src, dst)``.
+
+    Pure function over ``(nodes, resolved)`` — deterministic and unit-testable
+    in isolation, mirroring :func:`resolve_edges`. Runs after resolution so it
+    sees concrete node ids, not raw targets.
+    """
+    path_by_id = {node.node_id: node.path for node in nodes}
+    seen: set[tuple[str, str]] = set()
+    test_edges: list[Edge] = []
+    for edge in resolved:
+        if edge.kind not in _TEST_REACH_KINDS:
+            continue
+        src_path = path_by_id.get(edge.src_id)
+        dst_path = path_by_id.get(edge.dst_id)
+        if src_path is None or dst_path is None:
+            continue
+        if not _is_test_path(src_path) or _is_test_path(dst_path):
+            continue
+        key = (edge.src_id, edge.dst_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        test_edges.append(
+            Edge(
+                src_id=edge.src_id,
+                dst_id=edge.dst_id,
+                kind="tests",
+                path=src_path,
+                resolution=edge.resolution,
+                confidence=edge.confidence,
+            )
+        )
+    return test_edges
 
 
 def _resolve_markdown_tags(
@@ -673,6 +746,7 @@ def _full_index(
         folder, recursive, use_default_ignores=use_default_ignores
     )
     resolved_edges = resolve_edges(all_nodes, all_edges)
+    resolved_edges.extend(enrich_test_edges(all_nodes, resolved_edges))
     _write(store, file_rows, all_nodes, resolved_edges, build_stamp, folder)
     _finalize(store)
 
@@ -730,6 +804,7 @@ def _incremental_index(
 
     build_stamp = datetime.datetime.now(datetime.UTC)
     resolved_edges = resolve_edges(all_nodes, all_edges)
+    resolved_edges.extend(enrich_test_edges(all_nodes, resolved_edges))
     _recreate_tables(store)
     _write(store, file_rows, all_nodes, resolved_edges, build_stamp, folder)
     _finalize(store)

@@ -50,6 +50,7 @@ def test_kind_constants():
         "embeds",
         "tagged",
         "member_of",
+        "tests",
     )
     assert RESOLUTIONS == ("exact", "best_effort")
 

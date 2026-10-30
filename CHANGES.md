@@ -12,6 +12,11 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
   stores a PageRank-style `centrality` per node and weakly-connected-component
   `member_of` community edges in a post-index phase, over the dependency edge
   kinds. These back the forthcoming `overview` and `analytics` tools.
+- __`tests` edges.__ The enrichment phase now derives `tests` edges from the
+  resolved graph: a symbol in a test file (by `test_*`/`*_test`/`*.test.*`/
+  `*.spec.*` naming or a `tests`/`__tests__`/`spec` directory) links to each
+  non-test symbol it calls, references, or imports. Backs the forthcoming
+  `related_tests` tool and the `impact` extension.
 
 ### Changed
 

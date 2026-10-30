@@ -20,6 +20,7 @@ EDGE_KINDS = (
     "embeds",
     "tagged",
     "member_of",
+    "tests",
 )
 RESOLUTIONS = ("exact", "best_effort")
 

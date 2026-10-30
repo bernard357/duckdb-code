@@ -113,11 +113,13 @@ kinds already present stay as the backbone; the additions are strictly
 additive.
 
 __Build status.__ Shipped at schema version 2: the `edges.confidence` column
-(with `resolution` derived from it), the `nodes.centrality` column, and
-`member_of` community edges, all produced by the deferred-index pipeline and
-its post-index analytics phase. Still staged, each landing with the tool it
-serves: the `vectors` table, the `tests` / cross-boundary `route` / git
-co-change edge kinds.
+(with `resolution` derived from it), the `nodes.centrality` column, `member_of`
+community edges, and `tests` edges — all produced by the deferred-index
+pipeline and its enrichment / post-index analytics phases. The `tests` edges
+are derived from the resolved graph in the enrichment phase: a test-file symbol
+(by naming or a test directory) links to each non-test symbol it reaches. Still
+staged, each landing with the tool it serves: the `vectors` table, and the
+cross-boundary `route` / git co-change edge kinds.
 
 ## Semantic search: vector storage {#vectors}
 
