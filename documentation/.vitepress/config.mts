@@ -50,6 +50,10 @@ export default withMermaid(
             { text: 'Developer workbook', link: '/developer-workbook' },
             { text: 'Performance workbook', link: '/performance-workbook' },
             {
+              text: 'Indexing strategy',
+              link: '/indexing-strategy-workbook',
+            },
+            {
               text: 'Foster adoption',
               link: '/register-package-procedure',
             },
