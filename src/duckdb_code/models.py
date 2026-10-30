@@ -19,8 +19,31 @@ EDGE_KINDS = (
     "links_to",
     "embeds",
     "tagged",
+    "member_of",
 )
 RESOLUTIONS = ("exact", "best_effort")
+
+# Per-strategy resolution confidence (0.0-1.0), the source of truth from which
+# the ``resolution`` flag is derived. The scale follows the Codebase-Memory
+# cascade: an exact qualified-name or module hit is near-certain; a scoped
+# unique-name match is strong; a suffix / last-segment fallback is weak. A
+# ``defines`` edge and any structurally exact bind are 1.0.
+CONFIDENCE_EXACT = 1.0  # defines, and a single exact qualified-name/module bind
+CONFIDENCE_IMPORT = 0.95  # resolved through the file's import map
+CONFIDENCE_SAME_MODULE = 0.90  # module-local unique bind
+CONFIDENCE_UNIQUE_NAME = 0.75  # unique project-wide simple-name bind
+CONFIDENCE_SUFFIX = 0.55  # last-segment / suffix fallback
+CONFIDENCE_FUZZY = 0.30  # last-resort
+
+# The threshold projecting numeric confidence onto the two-value resolution
+# flag: at or above is ``exact``, below is ``best_effort``. Kept here so the
+# store, the resolver, and the MCP contract share one definition.
+RESOLUTION_EXACT_THRESHOLD = 0.9
+
+
+def resolution_of(confidence: float) -> str:
+    """Project a numeric ``confidence`` onto the agent-facing resolution flag."""
+    return "exact" if confidence >= RESOLUTION_EXACT_THRESHOLD else "best_effort"
 
 
 class Node(BaseModel):
@@ -40,14 +63,18 @@ class Node(BaseModel):
     start_line: int
     end_line: int
     language: str
+    centrality: float = 0.0
 
 
 class Edge(BaseModel):
     """A directed dependency edge extracted from a single file.
 
     ``src_id`` is the dependent (the "from"), ``dst_id`` is the dependency (the
-    "to"). ``resolution`` is ``"exact"`` when the bind produced exactly one
-    in-set node from a scoped source, else ``"best_effort"``.
+    "to"). ``confidence`` is the numeric resolution confidence (0.0-1.0, see the
+    ``CONFIDENCE_*`` constants) and is the source of truth; ``resolution`` is
+    its two-value projection (``"exact"`` at or above
+    :data:`RESOLUTION_EXACT_THRESHOLD`, else ``"best_effort"``), kept so a
+    consumer can filter without re-deriving.
     """
 
     src_id: str
@@ -55,6 +82,7 @@ class Edge(BaseModel):
     kind: str
     path: str
     resolution: str
+    confidence: float = 1.0
 
 
 class ImpactNode(BaseModel):

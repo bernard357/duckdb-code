@@ -10,7 +10,12 @@ performance change cannot silently alter the graph.
 from pathlib import Path
 
 from duckdb_code.indexer import _extract_folder, resolve_edges
-from duckdb_code.models import Edge, Node
+from duckdb_code.models import (
+    CONFIDENCE_SAME_MODULE,
+    CONFIDENCE_SUFFIX,
+    Edge,
+    Node,
+)
 
 FIXTURES = [
     Path(__file__).parent / "fixtures" / "sample",
@@ -56,8 +61,8 @@ def test_resolution_matches_brute_force_reference():
                 local = by_local.get((module_qn, raw))
                 if local:
                     if len(local) == 1 and not is_js_ts:
-                        return [(local[0], "exact")]
-                    return [(nid, "best_effort") for nid in local]
+                        return [(local[0], CONFIDENCE_SAME_MODULE)]
+                    return [(nid, CONFIDENCE_SUFFIX) for nid in local]
             hits: list[str] = []
             for seg, nids in by_last_segment.items():
                 if seg == raw:
@@ -66,7 +71,7 @@ def test_resolution_matches_brute_force_reference():
             # than the cap is dropped as noise.
             if len(hits) > idx._SUFFIX_FANOUT_CAP:
                 return []
-            return [(nid, "best_effort") for nid in hits]
+            return [(nid, CONFIDENCE_SUFFIX) for nid in hits]
 
         idx._resolve_scoped = brute_scoped
         try:

@@ -29,7 +29,15 @@ from duckdb_code.extractors.base import Extraction
 from duckdb_code.extractors.markdown import _slug
 from duckdb_code.extractors.python import UNRESOLVED
 from duckdb_code.extractors.registry import detect_language, resolve_extractor
-from duckdb_code.models import Edge, Node
+from duckdb_code.models import (
+    CONFIDENCE_EXACT,
+    CONFIDENCE_IMPORT,
+    CONFIDENCE_SAME_MODULE,
+    CONFIDENCE_SUFFIX,
+    Edge,
+    Node,
+    resolution_of,
+)
 from duckdb_code.store import INDEX_DDL, SCHEMA_DDL, SCHEMA_VERSION, CodeStore
 
 logger = logging.getLogger(__name__)
@@ -205,13 +213,13 @@ def resolve_edges(nodes: list[Node], edges: list[Edge]) -> list[Edge]:
         if is_js_ts:
             hit = _resolve_js_specifier(raw, src.path if src else "", js_ts_modules)
             if hit is not None:
-                resolved.append(_bind(edge, hit, "best_effort"))
+                resolved.append(_bind(edge, hit, CONFIDENCE_SUFFIX))
             continue
         # Python import: try "from M import N" -> by_qn["M.N"], else the dotted
         # path as a module -> by_module; else the head module.
-        targets, resolution = _resolve_python_import(raw, by_qn, by_module)
+        targets, confidence = _resolve_python_import(raw, by_qn, by_module)
         for target in targets:
-            resolved.append(_bind(edge, target, resolution))
+            resolved.append(_bind(edge, target, confidence))
             if module_qn is not None:
                 bound = raw.split(".")[-1] if "." in raw else raw
                 by_local.setdefault((module_qn, bound), []).append(target)
@@ -227,10 +235,10 @@ def resolve_edges(nodes: list[Node], edges: list[Edge]) -> list[Edge]:
         module_qn = by_path_module.get(src.path) if src else None
         raw = _raw_target(edge.dst_id)
         is_js_ts = src is not None and src.language in _JS_TS_LANGUAGES
-        for dst_id, resolution in _resolve_scoped(
+        for dst_id, confidence in _resolve_scoped(
             edge.kind, raw, module_qn, by_local, by_last_segment, is_js_ts
         ):
-            resolved.append(_bind(edge, dst_id, resolution))
+            resolved.append(_bind(edge, dst_id, confidence))
 
     # Markdown link pass: bind links_to/embeds within the Markdown domain only.
     # It consults page-only symbol tables and never the code tables above, so a
@@ -277,9 +285,9 @@ def _resolve_markdown_tags(
         hits = by_tag_name.get(_raw_target(edge.dst_id))
         if not hits:
             continue
-        resolution = "exact" if len(hits) == 1 else "best_effort"
+        confidence = CONFIDENCE_EXACT if len(hits) == 1 else CONFIDENCE_SUFFIX
         for dst_id in hits:
-            resolved.append(_bind(edge, dst_id, resolution))
+            resolved.append(_bind(edge, dst_id, confidence))
     return resolved
 
 
@@ -333,8 +341,8 @@ def _resolve_markdown_links(
         binding = _resolve_markdown_target(
             raw, src.path, by_page_path, by_page_title, by_page_slug
         )
-        for dst_id, resolution in binding:
-            resolved.append(_bind(edge, dst_id, resolution))
+        for dst_id, confidence in binding:
+            resolved.append(_bind(edge, dst_id, confidence))
     return resolved
 
 
@@ -344,8 +352,8 @@ def _resolve_markdown_target(
     by_page_path: dict[str, str],
     by_page_title: dict[str, list[str]],
     by_page_slug: dict[str, list[str]],
-) -> list[tuple[str, str]]:
-    """Resolve one Markdown link target to ``(page_node_id, resolution)`` pairs.
+) -> list[tuple[str, float]]:
+    """Resolve one Markdown link target to ``(page_node_id, confidence)`` pairs.
 
     Returns an empty list for a dangling target (external URL, pure fragment,
     missing page), so the caller drops the edge.
@@ -367,7 +375,7 @@ def _resolve_markdown_target(
     if looks_like_path or path_part:
         hit = _match_page_path(path_part, src_path, by_page_path)
         if hit is not None:
-            return [(hit, "exact")]
+            return [(hit, CONFIDENCE_EXACT)]
         if looks_like_path:
             # A path-shaped target that matches no page is dangling.
             return []
@@ -382,9 +390,9 @@ def _resolve_markdown_target(
     return []
 
 
-def _title_bindings(hits: list[str]) -> list[tuple[str, str]]:
-    resolution = "exact" if len(hits) == 1 else "best_effort"
-    return [(nid, resolution) for nid in hits]
+def _title_bindings(hits: list[str]) -> list[tuple[str, float]]:
+    confidence = CONFIDENCE_EXACT if len(hits) == 1 else CONFIDENCE_SUFFIX
+    return [(nid, confidence) for nid in hits]
 
 
 def _match_page_path(
@@ -419,32 +427,35 @@ def _match_page_path(
     return None
 
 
-def _bind(edge: Edge, dst_id: str, resolution: str) -> Edge:
+def _bind(edge: Edge, dst_id: str, confidence: float) -> Edge:
     return Edge(
         src_id=edge.src_id,
         dst_id=dst_id,
         kind=edge.kind,
         path=edge.path,
-        resolution=resolution,
+        resolution=resolution_of(confidence),
+        confidence=confidence,
     )
 
 
 def _resolve_python_import(
     raw: str, by_qn: dict[str, list[str]], by_module: dict[str, str]
-) -> tuple[list[str], str]:
-    """Resolve a Python import raw target to in-set node ids.
+) -> tuple[list[str], float]:
+    """Resolve a Python import raw target to in-set node ids and a confidence.
 
     ``from M import N`` arrives as ``M.N`` and resolves via ``by_qn``; ``import
-    M`` arrives as ``M`` and resolves via ``by_module``. A single scoped hit is
-    exact; multiple candidates are best_effort; zero hits drop the edge.
+    M`` arrives as ``M`` and resolves via ``by_module``. A single qualified-name
+    or module hit is import-confident (0.95); multiple candidates drop to the
+    suffix level (0.55) since the bind is no longer unique; zero hits drop the
+    edge.
     """
     qn_hits = by_qn.get(raw)
     if qn_hits:
-        return qn_hits, ("exact" if len(qn_hits) == 1 else "best_effort")
+        return qn_hits, (CONFIDENCE_IMPORT if len(qn_hits) == 1 else CONFIDENCE_SUFFIX)
     module_hit = by_module.get(raw)
     if module_hit is not None:
-        return [module_hit], "exact"
-    return [], "best_effort"
+        return [module_hit], CONFIDENCE_IMPORT
+    return [], CONFIDENCE_SUFFIX
 
 
 def _resolve_scoped(
@@ -454,13 +465,13 @@ def _resolve_scoped(
     by_local: dict[tuple[str, str], list[str]],
     by_last_segment: dict[str, list[str]],
     is_js_ts: bool,
-) -> list[tuple[str, str]]:
-    """Resolve an inherits/calls/references edge to ``(dst_id, resolution)``.
+) -> list[tuple[str, float]]:
+    """Resolve an inherits/calls/references edge to ``(dst_id, confidence)``.
 
-    Bare name -> ``by_local[(module, name)]`` (exact on a single hit, else
-    best_effort). Attribute tail / suffix -> last-segment match, always
-    best_effort (fix 5). Zero in-set nodes -> empty (the edge is dropped). Every
-    JS/TS edge is best_effort.
+    Bare name -> ``by_local[(module, name)]`` (same-module confidence 0.90 on a
+    single hit, else the weaker suffix level). Attribute tail / suffix ->
+    last-segment match, always suffix confidence (0.55, fix 5). Zero in-set
+    nodes -> empty (the edge is dropped). Every JS/TS edge is suffix-level.
 
     ``by_last_segment`` maps each qualified_name's final dotted segment to the
     node ids (in ``by_qn`` insertion order), so the suffix fallback is an O(1)
@@ -470,8 +481,8 @@ def _resolve_scoped(
         local = by_local.get((module_qn, raw))
         if local:
             if len(local) == 1 and not is_js_ts:
-                return [(local[0], "exact")]
-            return [(nid, "best_effort") for nid in local]
+                return [(local[0], CONFIDENCE_SAME_MODULE)]
+            return [(nid, CONFIDENCE_SUFFIX) for nid in local]
     # Suffix match on the tail: every qualified_name whose last segment == raw.
     # A bare common name (e.g. ``run``, ``handler``, ``__init__``) can share its
     # last segment with symbols across many unrelated modules; binding to all of
@@ -482,7 +493,7 @@ def _resolve_scoped(
     # and drop the edge rather than inventing a dense fan-out.
     suffix_hits = by_last_segment.get(raw)
     if suffix_hits and len(suffix_hits) <= _SUFFIX_FANOUT_CAP:
-        return [(nid, "best_effort") for nid in suffix_hits]
+        return [(nid, CONFIDENCE_SUFFIX) for nid in suffix_hits]
     return []
 
 
@@ -663,6 +674,7 @@ def _full_index(
     )
     resolved_edges = resolve_edges(all_nodes, all_edges)
     _write(store, file_rows, all_nodes, resolved_edges, build_stamp, folder)
+    _finalize(store)
 
     return IndexReport(
         files=len(file_rows) + skipped,
@@ -720,6 +732,7 @@ def _incremental_index(
     resolved_edges = resolve_edges(all_nodes, all_edges)
     _recreate_tables(store)
     _write(store, file_rows, all_nodes, resolved_edges, build_stamp, folder)
+    _finalize(store)
 
     return IndexReport(
         files=len(file_rows) + skipped,
@@ -748,7 +761,13 @@ def _noop_report(store: CodeStore, skipped: int, *, mode: str) -> IndexReport:
     for (language,) in file_rows:
         languages[language] = languages.get(language, 0) + 1
     node_row = con.execute("SELECT COUNT(*) FROM nodes").fetchone()
-    edge_row = con.execute("SELECT COUNT(*) FROM edges").fetchone()
+    # Count content edges only: the derived ``member_of`` community edges that
+    # the post-index phase adds are analytics artifacts, not extracted content,
+    # so the report's edge total matches the full/incremental paths' count of
+    # resolved content edges.
+    edge_row = con.execute(
+        "SELECT COUNT(*) FROM edges WHERE kind != 'member_of'"
+    ).fetchone()
     node_count = node_row[0] if node_row else 0
     edge_count = edge_row[0] if edge_row else 0
     return IndexReport(
@@ -913,9 +932,13 @@ def _iter_files(
 
 
 def _recreate_tables(store: CodeStore) -> None:
-    """Drop and recreate the content tables for a v1 full rebuild.
+    """Drop and recreate the content tables for a full rebuild.
 
-    Schema/index DDL is owned by the store so the indexer's recreation and
+    Deferred-index bulk load: the tables are recreated WITHOUT their secondary
+    indexes, which are created once after the bulk insert (see
+    :func:`_create_indexes`). Building the B-tree indexes against the finished
+    tables is far cheaper than maintaining them across the executemany insert.
+    Schema DDL is owned by the store so the indexer's recreation and
     ``_ensure_schema`` agree.
     """
     con = store._con
@@ -923,8 +946,128 @@ def _recreate_tables(store: CodeStore) -> None:
         con.execute(f"DROP TABLE IF EXISTS {table}")
     for ddl in SCHEMA_DDL:
         con.execute(ddl)
+
+
+def _create_indexes(store: CodeStore) -> None:
+    """Create the secondary indexes after the bulk load (deferred-index)."""
+    con = store._con
     for ddl in INDEX_DDL:
         con.execute(ddl)
+
+
+# Edge kinds that carry a real dependency signal for centrality and community
+# detection. Structural-containment (``defines``) and Markdown-only edges are
+# excluded so the ranking reflects code dependencies, not nesting.
+_ANALYTICS_EDGE_KINDS = ("imports", "calls", "inherits", "references")
+
+_PAGERANK_DAMPING = 0.85
+_PAGERANK_ITERATIONS = 20
+
+
+def _finalize(store: CodeStore) -> None:
+    """Deferred-index creation followed by the index-time post-index phase.
+
+    Creates the secondary indexes against the finished tables, then computes and
+    persists the whole-graph analytics the tool layer reads: a PageRank-style
+    ``centrality`` per node and ``member_of`` community edges. Both are derived
+    from the stored dependency edges, so they always reflect exactly what was
+    written.
+    """
+    _create_indexes(store)
+    _compute_centrality(store)
+    _compute_communities(store)
+
+
+def _analytics_adjacency(store: CodeStore) -> tuple[list[str], dict[str, list[str]]]:
+    """Return ``(node_ids, out_edges)`` over the dependency edge kinds.
+
+    ``out_edges`` maps a src node id to the list of dst node ids it points at,
+    restricted to edges whose BOTH endpoints are real nodes (a dangling edge is
+    skipped). Shared by centrality and community detection so they see one
+    consistent graph.
+    """
+    con = store._con
+    node_ids = [r[0] for r in con.execute("SELECT node_id FROM nodes").fetchall()]
+    node_set = set(node_ids)
+    placeholders = ", ".join(["?"] * len(_ANALYTICS_EDGE_KINDS))
+    out_edges: dict[str, list[str]] = {}
+    for src, dst in con.execute(
+        f"SELECT src_id, dst_id FROM edges WHERE kind IN ({placeholders})",
+        list(_ANALYTICS_EDGE_KINDS),
+    ).fetchall():
+        if src in node_set and dst in node_set:
+            out_edges.setdefault(src, []).append(dst)
+    return node_ids, out_edges
+
+
+def _compute_centrality(store: CodeStore) -> None:
+    """Compute a PageRank-style centrality per node and persist it.
+
+    Standard iterative PageRank over the dependency subgraph with damping
+    ``_PAGERANK_DAMPING``; dangling nodes (no out-edges) redistribute their mass
+    uniformly so the vector stays a probability distribution. Converges in a
+    fixed, small number of iterations — the graph is a snapshot, not a live
+    system, so a fixed iteration budget is enough and keeps the cost bounded.
+    """
+    node_ids, out_edges = _analytics_adjacency(store)
+    n = len(node_ids)
+    if n == 0:
+        return
+    rank = {nid: 1.0 / n for nid in node_ids}
+    base = (1.0 - _PAGERANK_DAMPING) / n
+    for _ in range(_PAGERANK_ITERATIONS):
+        dangling = sum(rank[nid] for nid in node_ids if not out_edges.get(nid))
+        shared = _PAGERANK_DAMPING * dangling / n
+        nxt = {nid: base + shared for nid in node_ids}
+        for src, dsts in out_edges.items():
+            share = _PAGERANK_DAMPING * rank[src] / len(dsts)
+            for dst in dsts:
+                nxt[dst] += share
+        rank = nxt
+    store._con.executemany(
+        "UPDATE nodes SET centrality = ? WHERE node_id = ?",
+        [(rank[nid], nid) for nid in node_ids],
+    )
+
+
+def _compute_communities(store: CodeStore) -> None:
+    """Assign nodes to communities and persist ``member_of`` edges.
+
+    A frugal community pass: weakly-connected components over the undirected
+    dependency subgraph via union-find. This is the single-file,
+    zero-dependency stand-in for Louvain modularity — it groups nodes that
+    depend on one another into a stable component id, which is what the
+    ``analytics`` tool needs for clusters; a finer modularity split can replace
+    it later without changing the stored shape (``member_of`` edges).
+    """
+    node_ids, out_edges = _analytics_adjacency(store)
+    if not node_ids:
+        return
+    parent = {nid: nid for nid in node_ids}
+
+    def find(x: str) -> str:
+        root = x
+        while parent[root] != root:
+            root = parent[root]
+        while parent[x] != root:
+            parent[x], x = root, parent[x]
+        return root
+
+    def union(a: str, b: str) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for src, dsts in out_edges.items():
+        for dst in dsts:
+            union(src, dst)
+
+    con = store._con
+    con.executemany(
+        "INSERT INTO edges (src_id, dst_id, kind, path, resolution, confidence) "
+        "VALUES (?, ?, 'member_of', '', 'exact', ?)",
+        [(nid, find(nid), CONFIDENCE_EXACT) for nid in node_ids],
+    )
 
 
 def _write(
@@ -977,9 +1120,12 @@ def _write(
         )
     if edges:
         con.executemany(
-            "INSERT INTO edges (src_id, dst_id, kind, path, resolution) "
-            "VALUES (?, ?, ?, ?, ?)",
-            [(e.src_id, e.dst_id, e.kind, e.path, e.resolution) for e in edges],
+            "INSERT INTO edges (src_id, dst_id, kind, path, resolution, confidence) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (e.src_id, e.dst_id, e.kind, e.path, e.resolution, e.confidence)
+                for e in edges
+            ],
         )
     con.execute(
         "INSERT INTO meta (key, value) VALUES (?, ?)",
@@ -1096,7 +1242,14 @@ def _rebuild_file(
         )
     for edge in extraction.edges:
         con.execute(
-            "INSERT INTO edges (src_id, dst_id, kind, path, resolution) "
-            "VALUES (?, ?, ?, ?, ?)",
-            [edge.src_id, edge.dst_id, edge.kind, edge.path, edge.resolution],
+            "INSERT INTO edges (src_id, dst_id, kind, path, resolution, confidence) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                edge.src_id,
+                edge.dst_id,
+                edge.kind,
+                edge.path,
+                edge.resolution,
+                edge.confidence,
+            ],
         )

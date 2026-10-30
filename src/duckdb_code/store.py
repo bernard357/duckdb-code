@@ -79,7 +79,8 @@ SCHEMA_DDL = (
         path           TEXT NOT NULL,
         start_line     INTEGER NOT NULL,
         end_line       INTEGER NOT NULL,
-        language       TEXT NOT NULL
+        language       TEXT NOT NULL,
+        centrality     DOUBLE NOT NULL DEFAULT 0.0
     )
     """,
     """
@@ -88,7 +89,8 @@ SCHEMA_DDL = (
         dst_id     TEXT NOT NULL,
         kind       TEXT NOT NULL,
         path       TEXT NOT NULL,
-        resolution TEXT NOT NULL
+        resolution TEXT NOT NULL,
+        confidence DOUBLE NOT NULL DEFAULT 1.0
     )
     """,
     """
@@ -110,7 +112,11 @@ INDEX_DDL = (
     "CREATE INDEX IF NOT EXISTS idx_edges_path ON edges (path)",
 )
 
-SCHEMA_VERSION = 1
+# Schema version 2 adds ``edges.confidence`` (numeric per-edge resolution
+# confidence, the source of truth from which the ``resolution`` flag is
+# derived) and ``nodes.centrality`` (index-time PageRank-style rank). A store
+# opened against an older file recreates the schema on the next full index.
+SCHEMA_VERSION = 2
 
 
 class CodeStore:

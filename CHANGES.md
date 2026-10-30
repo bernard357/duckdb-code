@@ -6,8 +6,25 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
 
 ## Unreleased
 
+### Added
+
+- __Index-time graph analytics (schema v2).__ A full index now computes and
+  stores a PageRank-style `centrality` per node and weakly-connected-component
+  `member_of` community edges in a post-index phase, over the dependency edge
+  kinds. These back the forthcoming `overview` and `analytics` tools.
+
 ### Changed
 
+- __Numeric per-edge `confidence` (schema v2).__ Call resolution now assigns a
+  numeric confidence (0.0–1.0) per strategy — import map 0.95, same-module
+  0.90, suffix 0.55, exact/`defines` 1.0 — stored on `edges.confidence` as the
+  source of truth; the existing `exact`/`best_effort` `resolution` is derived
+  from it by a documented 0.9 threshold. Schema bumped to version 2
+  (`edges.confidence`, `nodes.centrality`); a store opened against a v1 file
+  recreates the schema on the next full index.
+- __Deferred-index bulk load.__ The full/incremental write path now recreates
+  the tables without their secondary indexes, bulk-inserts, then creates the
+  indexes — faster fresh indexing, and a clean post-index phase seam.
 - __BREAKING: renamed the project from `duckdb-graph` to `duckdb-code`__ and
   broadened its framing from a code graph to a DuckDB-backed code-intelligence
   building block whose MCP tools help an IDE or CLI explore and change a

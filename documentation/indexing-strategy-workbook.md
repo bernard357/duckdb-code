@@ -112,6 +112,13 @@ contract that keeps the schema and the tools in lock-step. The core node/edge
 kinds already present stay as the backbone; the additions are strictly
 additive.
 
+__Build status.__ Shipped at schema version 2: the `edges.confidence` column
+(with `resolution` derived from it), the `nodes.centrality` column, and
+`member_of` community edges, all produced by the deferred-index pipeline and
+its post-index analytics phase. Still staged, each landing with the tool it
+serves: the `vectors` table, the `tests` / cross-boundary `route` / git
+co-change edge kinds.
+
 ## Semantic search: vector storage {#vectors}
 
 Two contract tools — `search` (intent / ranked-symbol lookup) and

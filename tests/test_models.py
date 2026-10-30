@@ -49,6 +49,7 @@ def test_kind_constants():
         "links_to",
         "embeds",
         "tagged",
+        "member_of",
     )
     assert RESOLUTIONS == ("exact", "best_effort")
 
@@ -73,9 +74,11 @@ def test_node_fields():
         "start_line",
         "end_line",
         "language",
+        "centrality",
     }
     assert node.start_line == 10
     assert node.language == "python"
+    assert node.centrality == 0.0
 
 
 def test_edge_fields():
@@ -92,8 +95,10 @@ def test_edge_fields():
         "kind",
         "path",
         "resolution",
+        "confidence",
     }
     assert edge.resolution == "exact"
+    assert edge.confidence == 1.0
 
 
 def test_impact_node_fields():
