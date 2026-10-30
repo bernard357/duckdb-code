@@ -10,7 +10,7 @@ from pathlib import Path
 import typer.main
 from typer.testing import CliRunner
 
-from duckdb_graph.cli import app
+from duckdb_code.cli import app
 
 runner = CliRunner()
 
@@ -195,10 +195,10 @@ def test_mcp_verb_is_wired():
 
 
 def test_mcp_http_transport_dispatches_to_run_http(monkeypatch):
-    # The verb imports the runners lazily from duckdb_graph.mcp_server; patch
+    # The verb imports the runners lazily from duckdb_code.mcp_server; patch
     # them there and assert --transport http routes to run_http with the parsed
     # host/port and never touches run_stdio.
-    import duckdb_graph.mcp_server as mcp_server
+    import duckdb_code.mcp_server as mcp_server
 
     calls = {}
     monkeypatch.setattr(
@@ -217,7 +217,7 @@ def test_mcp_http_transport_dispatches_to_run_http(monkeypatch):
 
 
 def test_mcp_default_dispatches_to_run_stdio(monkeypatch):
-    import duckdb_graph.mcp_server as mcp_server
+    import duckdb_code.mcp_server as mcp_server
 
     calls = {}
     monkeypatch.setattr(mcp_server, "run_stdio", lambda *a, **k: calls.update(stdio=1))
@@ -239,7 +239,7 @@ def _patch_serve_noops(monkeypatch):
     Returns the ``calls`` dict so a test can assert which transport was reached
     (or that neither was, when the startup build fails).
     """
-    import duckdb_graph.mcp_server as mcp_server
+    import duckdb_code.mcp_server as mcp_server
 
     calls: dict = {}
     monkeypatch.setattr(mcp_server, "run_stdio", lambda *a, **k: calls.update(stdio=1))
@@ -248,9 +248,9 @@ def _patch_serve_noops(monkeypatch):
 
 
 def _node_count(db: str) -> int:
-    from duckdb_graph.store import GraphStore
+    from duckdb_code.store import CodeStore
 
-    store = GraphStore(db_path=db)
+    store = CodeStore(db_path=db)
     try:
         return sum(store.report().nodes_by_kind.values())
     finally:
@@ -310,15 +310,15 @@ def test_version_flag_prints_metadata_version():
     assert result.exit_code == 0
     printed = result.stdout.strip()
     assert printed, "no version printed"
-    assert printed == version("duckdb-graph")
+    assert printed == version("duckdb-code")
     # It printed the version, not the help screen that no_args_is_help shows.
     assert "Usage:" not in result.stdout
 
 
 def test_version_falls_back_to_sentinel(monkeypatch):
     """A missing distribution degrades to the sentinel, never a traceback."""
-    import duckdb_graph
-    import duckdb_graph.cli as cli_module
+    import duckdb_code
+    import duckdb_code.cli as cli_module
 
     monkeypatch.setattr(cli_module, "__version__", "0.0.0+unknown")
     result = runner.invoke(app, ["--version"])
@@ -330,5 +330,5 @@ def test_version_falls_back_to_sentinel(monkeypatch):
     def _raise(_name):
         raise PackageNotFoundError
 
-    monkeypatch.setattr("duckdb_graph.version", _raise)
-    assert duckdb_graph._resolve_version() == "0.0.0+unknown"
+    monkeypatch.setattr("duckdb_code.version", _raise)
+    assert duckdb_code._resolve_version() == "0.0.0+unknown"

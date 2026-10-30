@@ -4,7 +4,7 @@ help:
 	@echo "$$ make format                - Format Python code with Ruff"
 	@echo "$$ make lint                  - Run Ruff and Markdown lint checks"
 	@echo "$$ make test                  - Run the pytest suite"
-	@echo "$$ make self-test             - Capability evidence: run duckdb-graph on its own source"
+	@echo "$$ make self-test             - Capability evidence: run duckdb-code on its own source"
 	@echo "$$ make build                 - Build the wheel and sdist with uv"
 	@echo "Documentation site:"
 	@echo "$$ make setup-documentation   - Install the VitePress toolchain (npm ci)"
@@ -23,7 +23,7 @@ help:
 .EXPORT_ALL_VARIABLES:
 
 # default DuckDB database path
-DUCKDB_GRAPH_DB_PATH ?= graph.duckdb
+DUCKDB_CODE_DB_PATH ?= code.duckdb
 # default Python path for imports
 PYTHONPATH ?= .
 # source locations for static analysis

@@ -1,15 +1,15 @@
-"""Configuration resolution for duckdb-graph.
+"""Configuration resolution for duckdb-code.
 
 Precedence: explicit constructor argument > environment variable
-(``DUCKDB_GRAPH_*``) > default.
+(``DUCKDB_CODE_*``) > default.
 """
 
 import os
 
 from pydantic import BaseModel
 
-ENV_PREFIX = "DUCKDB_GRAPH_"
-DEFAULT_DB_PATH = "graph.duckdb"
+ENV_PREFIX = "DUCKDB_CODE_"
+DEFAULT_DB_PATH = "code.duckdb"
 
 
 def _env(name: str) -> str | None:
@@ -21,7 +21,7 @@ class Settings(BaseModel):
     """Resolved settings for a code-graph store.
 
     Each field falls back from the explicit argument to the matching
-    ``DUCKDB_GRAPH_*`` environment variable and finally to a default.
+    ``DUCKDB_CODE_*`` environment variable and finally to a default.
     """
 
     db_path: str

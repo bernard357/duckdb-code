@@ -1,7 +1,7 @@
-"""Self-test: run duckdb-graph against real inputs as capability evidence.
+"""Self-test: run duckdb-code against real inputs as capability evidence.
 
 This dogfoods the tool on BOTH parsers. For the code graph it indexes the
-package's own Python source (``src/duckdb_graph/``) and prints labelled
+package's own Python source (``src/duckdb_code/``) and prints labelled
 *requests* — list files, list functions, a change-impact traversal,
 cross-module symbol context, an index overview, and a most-depended-upon
 hotspot ranking. For the Markdown knowledge graph it indexes the committed
@@ -24,11 +24,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-from duckdb_graph.store import _DEPENDENCY_KINDS, GraphStore
+from duckdb_code.store import _DEPENDENCY_KINDS, CodeStore
 
 # The package source tree, resolved relative to this script (scripts/ -> repo).
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SOURCE_DIR = REPO_ROOT / "src" / "duckdb_graph"
+SOURCE_DIR = REPO_ROOT / "src" / "duckdb_code"
 
 # The committed Markdown fixture corpus — four interlinked pages, one an orphan.
 MARKDOWN_DIR = REPO_ROOT / "tests" / "fixtures" / "markdown"
@@ -45,14 +45,14 @@ EXPECTED_FILES = ("store.py", "indexer.py", "cli.py", "mcp_server.py")
 EXPECTED_FUNCTIONS = ("index_folder", "compute_etag")
 
 # The impact probe: index_folder is a load-bearing internal entry point called
-# by both GraphStore.index and _rebuild_file, so its reverse-dependency set
+# by both CodeStore.index and _rebuild_file, so its reverse-dependency set
 # has stable, known members. Membership is asserted on names; the provenance
 # label (exact vs best_effort) is intentionally not asserted.
 IMPACT_PROBE = "index_folder"
 EXPECTED_DEPENDENTS = ("_rebuild_file", "index")
 
 # The class whose cross-module context the suite prints.
-CONTEXT_CLASS = "GraphStore"
+CONTEXT_CLASS = "CodeStore"
 
 HOTSPOT_TOP_N = 5
 
@@ -70,7 +70,7 @@ def _header(label: str) -> None:
     print(f"\nREQUEST: {label}")
 
 
-def request_list_files(store: GraphStore) -> str:
+def request_list_files(store: CodeStore) -> str:
     """List the indexed source files (file-kind nodes)."""
     _header("list files")
     rows = store._con.execute(
@@ -85,7 +85,7 @@ def request_list_files(store: GraphStore) -> str:
     return f"{len(paths)} files, all expected modules present"
 
 
-def request_list_functions(store: GraphStore) -> str:
+def request_list_functions(store: CodeStore) -> str:
     """List the indexed functions (function-kind nodes)."""
     _header("list functions")
     rows = store._con.execute(
@@ -104,7 +104,7 @@ def request_list_functions(store: GraphStore) -> str:
     return f"{len(qnames)} functions, incl. {', '.join(EXPECTED_FUNCTIONS)}"
 
 
-def request_impact(store: GraphStore) -> str:
+def request_impact(store: CodeStore) -> str:
     """Traversal: files and symbols impacted by a change to a symbol."""
     _header(f"impact of a change to {IMPACT_PROBE!r}")
     impact = store.impact(IMPACT_PROBE)
@@ -131,7 +131,7 @@ def request_impact(store: GraphStore) -> str:
     )
 
 
-def request_context(store: GraphStore) -> str:
+def request_context(store: CodeStore) -> str:
     """Cross-module context of a symbol via explain."""
     _header(f"cross-module context of {CONTEXT_CLASS!r}")
     result = store.explain(CONTEXT_CLASS)
@@ -164,7 +164,7 @@ def request_context(store: GraphStore) -> str:
     )
 
 
-def request_overview(store: GraphStore) -> str:
+def request_overview(store: CodeStore) -> str:
     """One-glance profile of the indexed codebase via report()."""
     _header("index overview")
     report = store.report()
@@ -180,7 +180,7 @@ def request_overview(store: GraphStore) -> str:
     return f"{node_total} nodes, {edge_total} edges across {report.languages}"
 
 
-def request_hotspots(store: GraphStore) -> str:
+def request_hotspots(store: CodeStore) -> str:
     """Rank the most-depended-upon symbols by reverse-dependency fan-in."""
     _header("most-depended-upon symbols (hotspots)")
     placeholders = ", ".join("?" for _ in _DEPENDENCY_KINDS)
@@ -202,7 +202,7 @@ def request_hotspots(store: GraphStore) -> str:
     return f"top {len(rows)} depended-upon symbols, max fan_in {rows[0][2]}"
 
 
-def request_markdown_overview(store: GraphStore) -> str:
+def request_markdown_overview(store: CodeStore) -> str:
     """Knowledge-graph profile of the indexed Markdown corpus via report()."""
     _header("markdown index overview")
     report = store.report()
@@ -229,7 +229,7 @@ def request_markdown_overview(store: GraphStore) -> str:
     )
 
 
-def request_markdown_links_here(store: GraphStore) -> str:
+def request_markdown_links_here(store: CodeStore) -> str:
     """What links here: impact on a linked page returns its linker pages."""
     _header(f"what links to {MARKDOWN_LINKED_PAGE!r}")
     impact = store.impact(MARKDOWN_LINKED_PAGE)
@@ -243,7 +243,7 @@ def request_markdown_links_here(store: GraphStore) -> str:
     return f"{MARKDOWN_LINKED_PAGE} is linked by {len(linkers)} page(s)"
 
 
-def request_markdown_orphan(store: GraphStore) -> str:
+def request_markdown_orphan(store: CodeStore) -> str:
     """Orphan check: the orphan page has zero inbound links."""
     _header(f"orphan check on {MARKDOWN_ORPHAN_PAGE!r}")
     impact = store.impact(MARKDOWN_ORPHAN_PAGE)
@@ -273,13 +273,13 @@ MARKDOWN_REQUESTS = (
 )
 
 
-def run_requests(store: GraphStore) -> list[str]:
+def run_requests(store: CodeStore) -> list[str]:
     """Index the package source, then run every code request, returning summaries."""
     store.index(SOURCE_DIR)
     return [request(store) for request in REQUESTS]
 
 
-def run_markdown_requests(store: GraphStore) -> list[str]:
+def run_markdown_requests(store: CodeStore) -> list[str]:
     """Index the Markdown corpus, then run every Markdown request."""
     store.index(MARKDOWN_DIR)
     return [request(store) for request in MARKDOWN_REQUESTS]
@@ -289,7 +289,7 @@ def main() -> int:
     _require_source_exists()
     with tempfile.TemporaryDirectory() as tmp:
         code_db = str(Path(tmp) / "self_test_code.duckdb")
-        store = GraphStore(db_path=code_db)
+        store = CodeStore(db_path=code_db)
         try:
             code_summaries = run_requests(store)
         finally:
@@ -297,7 +297,7 @@ def main() -> int:
         # Code and Markdown live in separate databases, mirroring the domain
         # separation the parsers enforce in a shared DB.
         md_db = str(Path(tmp) / "self_test_markdown.duckdb")
-        store = GraphStore(db_path=md_db)
+        store = CodeStore(db_path=md_db)
         try:
             md_summaries = run_markdown_requests(store)
         finally:

@@ -1,4 +1,4 @@
-"""duckdb-graph: an embeddable code-graph building block.
+"""duckdb-code: an embeddable code-intelligence building block.
 
 Exposes a simplified interface over a local DuckDB database holding a
 tree-sitter-extracted code graph, with reverse-dependency impact analysis and
@@ -7,42 +7,42 @@ structure explanation. One DuckDB file is one index.
 
 from importlib.metadata import PackageNotFoundError, version
 
-from duckdb_graph.config import Settings
-from duckdb_graph.etag import compute_etag
-from duckdb_graph.extractors.base import Extraction, Extractor
-from duckdb_graph.extractors.javascript import JsTsExtractor
-from duckdb_graph.extractors.python import PythonExtractor
-from duckdb_graph.extractors.registry import (
+from duckdb_code.config import Settings
+from duckdb_code.etag import compute_etag
+from duckdb_code.extractors.base import Extraction, Extractor
+from duckdb_code.extractors.javascript import JsTsExtractor
+from duckdb_code.extractors.python import PythonExtractor
+from duckdb_code.extractors.registry import (
     detect_language,
     register_extractor,
     resolve_extractor,
 )
-from duckdb_graph.indexer import IndexReport, index_folder
-from duckdb_graph.mcp_server import build_server
-from duckdb_graph.models import (
+from duckdb_code.indexer import IndexReport, index_folder
+from duckdb_code.mcp_server import build_server
+from duckdb_code.models import (
+    CodeExport,
+    CodeExportEdge,
+    CodeExportNode,
     Edge,
     Explanation,
     ExplanationResult,
-    GraphExport,
-    GraphExportEdge,
-    GraphExportNode,
     ImpactNode,
     ImpactResult,
     Node,
     Report,
 )
-from duckdb_graph.store import GraphStore
+from duckdb_code.store import CodeStore
 
 __all__ = [
-    "GraphStore",
+    "CodeExport",
+    "CodeExportEdge",
+    "CodeExportNode",
+    "CodeStore",
     "Edge",
     "Explanation",
     "ExplanationResult",
     "Extraction",
     "Extractor",
-    "GraphExport",
-    "GraphExportEdge",
-    "GraphExportNode",
     "ImpactNode",
     "ImpactResult",
     "IndexReport",
@@ -73,7 +73,7 @@ def _resolve_version() -> str:
     sentinel so ``--version`` never crashes.
     """
     try:
-        return version("duckdb-graph")
+        return version("duckdb-code")
     except PackageNotFoundError:
         return "0.0.0+unknown"
 

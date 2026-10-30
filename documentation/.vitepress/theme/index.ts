@@ -4,7 +4,7 @@ import { h } from 'vue'
 import SiteFooter from './SiteFooter.vue'
 import './custom.css'
 
-// Extend the VitePress default theme with the duckdb-graph house skin.
+// Extend the VitePress default theme with the duckdb-code house skin.
 // Keeping the default theme (rather than forking it) means the brand lives
 // entirely in custom.css and survives VitePress upgrades. Slot:
 //   layout-bottom — site footer (SiteFooter)

@@ -10,7 +10,7 @@ that actually changed. Runs are serialized by construction: the loop processes
 one batch at a time, so events arriving mid-run are picked up on the next batch.
 
 ``watchfiles`` is imported lazily inside :func:`watch` so the dependency is only
-loaded when watching, keeping ``import duckdb_graph`` light.
+loaded when watching, keeping ``import duckdb_code`` light.
 """
 
 from __future__ import annotations
@@ -18,8 +18,8 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
-from duckdb_graph.indexer import _DEFAULT_IGNORED_DIRS, IndexReport, index_folder
-from duckdb_graph.store import GraphStore
+from duckdb_code.indexer import _DEFAULT_IGNORED_DIRS, IndexReport, index_folder
+from duckdb_code.store import CodeStore
 
 
 def _is_relevant_change(
@@ -49,7 +49,7 @@ def _is_relevant_change(
 
 
 def watch(
-    store: GraphStore,
+    store: CodeStore,
     folder: str | Path,
     *,
     recursive: bool = True,

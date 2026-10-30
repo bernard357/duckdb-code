@@ -1,6 +1,6 @@
 # Graph viewer guide
 
-`duckdb-graph` builds a structural graph of code and Markdown. The viewer under
+`duckdb-code` builds a structural graph of code and Markdown. The viewer under
 `examples/graph-viewer/` turns an export of that graph into an interactive web
 widget so you can navigate it, zoom into one region, and expand a node's
 neighbourhood on demand. This is structural visualization — the link and
@@ -19,8 +19,8 @@ The viewer consumes a single JSON file produced by the `export` verb. Index a
 folder, export the graph, then open the viewer against the result:
 
 ```shell
-$ duckdb-graph index tests/fixtures/markdown --db graph.duckdb
-$ duckdb-graph export --db graph.duckdb --out examples/graph-viewer/graph.json
+$ duckdb-code index tests/fixtures/markdown --db code.duckdb
+$ duckdb-code export --db code.duckdb --out examples/graph-viewer/graph.json
 ```
 
 Then serve the viewer folder over HTTP and open it, because the page `fetch`es
@@ -32,7 +32,7 @@ $ python -m http.server 8000
 ```
 
 Browse to <http://localhost:8000/>. To visualize code instead of Markdown,
-point `index` at the source tree (for example `src/duckdb_graph`) and export
+point `index` at the source tree (for example `src/duckdb_code`) and export
 over the same `graph.json`.
 
 ## The JSON contract {#the-json-contract}

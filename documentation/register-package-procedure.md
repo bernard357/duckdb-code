@@ -1,8 +1,8 @@
 # Communication kit for package discovery
 
-This page is a reusable kit for spreading `duckdb-graph` across both human and
+This page is a reusable kit for spreading `duckdb-code` across both human and
 agentic audiences. Beyond automated discovery, we maintain a communication
-package and a list of referencing places for `duckdb-graph`. For the full
+package and a list of referencing places for `duckdb-code`. For the full
 picture of what you are registering, start from the
 [documentation home](index.md).
 
@@ -13,7 +13,7 @@ They are account-level operator steps, performed once by a maintainer with the
 right access, not part of a normal pull request:
 
 1. __Create the PyPI project and Trusted Publisher.__ Register the
-   `duckdb-graph` project on PyPI, then add a Trusted Publisher pointing at this
+   `duckdb-code` project on PyPI, then add a Trusted Publisher pointing at this
    repository's `deploy-pypi` workflow and the `pypi` environment. OIDC Trusted
    Publishing means the workflow publishes with no long-lived API token.
 2. __Enable GitHub Pages with the Actions source.__ In the repository settings,
@@ -28,7 +28,7 @@ Two discovery conventions can be served from the project itself, so most venues
 can point at them rather than restate the content:
 
 - __`AGENTS.md`__ — an agent-facing Markdown file at the repository top level:
-  [AGENTS.md](https://github.com/bernard357/duckdb-graph/blob/main/AGENTS.md),
+  [AGENTS.md](https://github.com/bernard357/duckdb-code/blob/main/AGENTS.md),
   usable jointly by crawling agents and by agentic IDEs. It is the agreed
   "README for agents" standard that most coding agents now read. See
   [agents.md](https://agents.md/).
@@ -41,15 +41,15 @@ can point at them rather than restate the content:
 
 ## Working a reference
 
-Working on a new reference to `duckdb-graph` consists of the following steps:
+Working on a new reference to `duckdb-code` consists of the following steps:
 
 1. Scope a suitable registry or reference where it would make sense to list
-   `duckdb-graph`.
+   `duckdb-code`.
 2. If this reference is already present in the table below and tagged
    `complete`, stop here. Consider another reference target.
 3. __candidate → on-going.__ Open a pull request that updates this page,
    mentioning what you are working on, then do whatever is necessary to register
-   `duckdb-graph` at the referencing site. Read the venue's current submission
+   `duckdb-code` at the referencing site. Read the venue's current submission
    rules at its link in the table below (they drift), then prepare the
    submission from the registration package.
 4. __on-going.__ The submission is open and awaiting third-party review or
@@ -64,13 +64,13 @@ live and verified.
 ## The registration package
 
 Copy-paste these fields into any submission form, catalog entry, or pull request
-that helps referencing `duckdb-graph`.
+that helps referencing `duckdb-code`.
 
-- __Name:__ `duckdb-graph`
+- __Name:__ `duckdb-code`
 - __One-line pitch:__ A frugal, embeddable code-graph building block for agentic
   systems — tree-sitter impact analysis and structure explanation over a local
   DuckDB file, no external service.
-- __Description:__ `duckdb-graph` indexes a repository into a single DuckDB file
+- __Description:__ `duckdb-code` indexes a repository into a single DuckDB file
   and answers structural questions — `impact` (the transitive reverse-dependency
   set of a symbol or file), `explain` (a symbol's structural neighbourhood), and
   `report` (index introspection) — with a local function call. The file bakes
@@ -80,16 +80,16 @@ that helps referencing `duckdb-graph`.
   Streamable HTTP) exposing its query tools.
 - __Keywords:__ duckdb, code-graph, tree-sitter, impact-analysis, static-analysis,
   dependency-graph, agents, mcp, llm, codebase
-- __Install:__ `pip install duckdb-graph`
-- __MCP tools:__ `duckdb-graph mcp` exposes three query tools —
+- __Install:__ `pip install duckdb-code`
+- __MCP tools:__ `duckdb-code mcp` exposes three query tools —
   `impact(target, …)`, `explain(target, …)`, and `report()` — over stdio
   (same-container subprocess) and Streamable HTTP (`--transport http`).
 - __License:__ MIT
 - __Links:__
-  - PyPI: <https://pypi.org/project/duckdb-graph/>
-  - Documentation: <https://bernard357.github.io/duckdb-graph/>
-  - Repository: <https://github.com/bernard357/duckdb-graph>
-  - Agent instructions: [AGENTS.md](https://github.com/bernard357/duckdb-graph/blob/main/AGENTS.md)
+  - PyPI: <https://pypi.org/project/duckdb-code/>
+  - Documentation: <https://bernard357.github.io/duckdb-code/>
+  - Repository: <https://github.com/bernard357/duckdb-code>
+  - Agent instructions: [AGENTS.md](https://github.com/bernard357/duckdb-code/blob/main/AGENTS.md)
 
 ## External references
 
@@ -107,4 +107,4 @@ requires an accepted review.
 | [awesome-static-analysis](https://github.com/analysis-tools-dev/static-analysis) | Curated awesome-list | candidate |
 
 The candidates listed here are only suggestions. Please add any other reference
-you believe is worth the effort to spread `duckdb-graph`.
+you believe is worth the effort to spread `duckdb-code`.

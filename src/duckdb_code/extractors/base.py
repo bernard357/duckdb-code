@@ -4,7 +4,7 @@ from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
-from duckdb_graph.models import Edge, Node
+from duckdb_code.models import Edge, Node
 
 
 class Extraction(BaseModel):

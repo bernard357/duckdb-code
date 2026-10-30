@@ -1,8 +1,8 @@
-# duckdb-graph
+# duckdb-code
 
-__A frugal, embeddable code-graph building block for agentic systems — tree-sitter impact analysis and structure explanation over a local DuckDB file, no external service.__
+__A frugal, embeddable code-intelligence building block for agentic systems — MCP tools that help an IDE or CLI explore and change a codebase over a local DuckDB file, no external service. Impact analysis and structure explanation over the dependency graph is the first capability.__
 
-`duckdb-graph` is a python package that exposes the actual structure of a
+`duckdb-code` is a python package that exposes the actual structure of a
 codebase to a local agent, in 3 steps:
 
 1. analyze a folder of source files with tree-sitter and extract nodes and edges
@@ -24,7 +24,7 @@ the external service entirely. Index the code into a single DuckDB file, keep
 that file next to the agent, and answer `impact` / `explain` / `report` with a
 local function call, no network round-trip. Where
 [`duckdb-vectors`](https://github.com/bernard357/duckdb-vectors) answers "what
-text is semantically near this query", `duckdb-graph` answers "what code is
+text is semantically near this query", `duckdb-code` answers "what code is
 affected if this symbol or file changes" and "what is the structure of this
 code". The must-be-reliable deliverable is `impact`: a transitive
 reverse-dependency set over the edge graph, with every best-effort edge flagged
@@ -32,7 +32,7 @@ rather than silently dropped.
 
 ## Data architecture decisions and facts
 
-A few deliberate choices shape how `duckdb-graph` indexes and serves:
+A few deliberate choices shape how `duckdb-code` indexes and serves:
 
 - __One DuckDB file is one graph__ — no external graph service and no network
   hop on the query path.
@@ -55,14 +55,14 @@ Because re-indexing is incremental and cheap, the graph can track the working
 tree as an agent edits it, rather than going stale the moment code changes.
 Three mechanisms keep it current:
 
-- `duckdb-graph index` reconciles only what changed since the last run
+- `duckdb-code index` reconciles only what changed since the last run
   (etag-driven), so a re-index after an edit is a near-instant no-op when
   nothing moved.
-- `duckdb-graph watch <folder>` runs as a long-lived process and re-indexes
+- `duckdb-code watch <folder>` runs as a long-lived process and re-indexes
   incrementally on every relevant file change, so the graph stays live with no
   manual step — the natural fit for an IDE session where the agent is actively
   editing.
-- `duckdb-graph mcp --index <folder>` folds a startup incremental build into
+- `duckdb-code mcp --index <folder>` folds a startup incremental build into
   the MCP server, so a freshly launched agent serves a graph that already
   reflects the current source.
 
@@ -76,27 +76,27 @@ Run the tool with `uvx` and uv fetches the package and its dependencies on the
 first call and reuses the cache after:
 
 ```shell
-$ uvx duckdb-graph --help                 # run without installing
-$ uvx duckdb-graph index ./my-project     # index a folder
+$ uvx duckdb-code --help                 # run without installing
+$ uvx duckdb-code index ./my-project     # index a folder
 ```
 
-For a persistent `duckdb-graph` on your `PATH` (handy when an MCP client config
+For a persistent `duckdb-code` on your `PATH` (handy when an MCP client config
 wants an absolute command path), install it as a uv tool:
 
 ```shell
-$ uv tool install duckdb-graph
-$ duckdb-graph --help
+$ uv tool install duckdb-code
+$ duckdb-code --help
 ```
 
-Prefer `pip`? `pip install duckdb-graph` into a virtual environment works the
+Prefer `pip`? `pip install duckdb-code` into a virtual environment works the
 same way.
 
 To run an unreleased build — a git ref or a local checkout — use the same
 commands with `--from`:
 
 ```shell
-$ uvx --from git+https://github.com/bernard357/duckdb-graph duckdb-graph --help
-$ uvx --from /path/to/duckdb-graph duckdb-graph --help   # from a local clone
+$ uvx --from git+https://github.com/bernard357/duckdb-code duckdb-code --help
+$ uvx --from /path/to/duckdb-code duckdb-code --help   # from a local clone
 ```
 
 ## SDK entry point
@@ -105,9 +105,9 @@ Open a store against a local `.duckdb` file and query it. The store always
 opens read-write, since incremental updates are the rule for this package:
 
 ```python
-from duckdb_graph import GraphStore
+from duckdb_code import CodeStore
 
-store = GraphStore(db_path="graph.duckdb")
+store = CodeStore(db_path="code.duckdb")
 
 result = store.impact("payments.charge.Charge")
 for hit in result.affected:
@@ -130,9 +130,9 @@ re-resolved; a no-change re-index is a no-op. The incremental result is
 identical to a full rebuild of the same on-disk state.
 
 ```python
-from duckdb_graph import GraphStore
+from duckdb_code import CodeStore
 
-store = GraphStore(db_path="graph.duckdb")
+store = CodeStore(db_path="code.duckdb")
 
 store.index("./my-project")              # full build on an empty database
 store.index("./my-project")              # incremental re-index (etag-driven)
@@ -142,9 +142,9 @@ store.index("./my-project", rebuild=True)  # force a full rebuild
 ## Indexing from the CLI
 
 ```shell
-$ duckdb-graph --version                               # print the version and exit
-$ duckdb-graph index ./my-project --db graph.duckdb   # incremental by default
-$ duckdb-graph index ./my-project --db graph.duckdb --rebuild  # full rebuild
+$ duckdb-code --version                               # print the version and exit
+$ duckdb-code index ./my-project --db code.duckdb   # incremental by default
+$ duckdb-code index ./my-project --db code.duckdb --rebuild  # full rebuild
 ```
 
 The `index` verb is incremental-by-default: it runs a full build when the
@@ -179,7 +179,7 @@ interlinked notes becomes a graph alongside code. Point `index` at a Markdown
 folder:
 
 ```shell
-$ duckdb-graph index ./my-notes --db graph.duckdb
+$ duckdb-code index ./my-notes --db code.duckdb
 ```
 
 Every `.md` / `.markdown` file becomes a `page` node with `heading` and `tag`
@@ -200,14 +200,14 @@ Code and Markdown stay in separate domains: a Markdown link never binds to a
 code symbol and a code edge never binds to a page, so the two corpora can share
 one database without crosstalk.
 
-Semantic / vector search is out of scope for `duckdb-graph` — it answers
+Semantic / vector search is out of scope for `duckdb-code` — it answers
 structural, link-based questions. For "what text is semantically near this
 query", use the sibling
 [`duckdb-vectors`](https://github.com/bernard357/duckdb-vectors) package.
 
 ## MCP tool
 
-`duckdb-graph mcp` is an MCP-over-stdio server exposing four query tools:
+`duckdb-code mcp` is an MCP-over-stdio server exposing four query tools:
 
 - `impact(target, …)` — transitive reverse-dependency set for a symbol or file.
 - `explain(target, …)` — structural neighbourhood of a symbol or file.
@@ -217,7 +217,7 @@ query", use the sibling
   JSON, writing it to a file and returning a summary by default (inline only for
   a small graph).
 
-An MCP client spawns `duckdb-graph mcp` as a child process in the same
+An MCP client spawns `duckdb-code mcp` as a child process in the same
 container and talks to it over stdin/stdout; stdio is a same-container
 transport, not a network protocol.
 
@@ -225,9 +225,9 @@ The server also serves over __Streamable HTTP__, selected with
 `--transport http`:
 
 ```shell
-$ duckdb-graph mcp                                   # stdio (default)
-$ duckdb-graph mcp --transport http                  # http on 127.0.0.1:8000/mcp
-$ duckdb-graph mcp --transport http --host 127.0.0.1 --port 8000
+$ duckdb-code mcp                                   # stdio (default)
+$ duckdb-code mcp --transport http                  # http on 127.0.0.1:8000/mcp
+$ duckdb-code mcp --transport http --host 127.0.0.1 --port 8000
 ```
 
 HTTP binds loopback `127.0.0.1:8000` at path `/mcp` by default; pass `--host`
@@ -237,7 +237,7 @@ transport is the groundwork that will later let a client index a repository in
 a separate sandbox (for example a GitHub repository); that remote / sandbox
 indexing is __future work this transport enables__, not something shipped here.
 
-Pass `--index <folder>` (or set `DUCKDB_GRAPH_ROOT`) to index that folder on
+Pass `--index <folder>` (or set `DUCKDB_CODE_ROOT`) to index that folder on
 startup before serving — an incremental build, so the served graph reflects the
 current source without a separate `index` run. Build progress goes to stderr
 (stdout carries the MCP stdio protocol) and a failed build aborts startup. Pass
@@ -268,19 +268,19 @@ Drive common tasks through `make`; do not call the underlying tools directly:
 - `make setup` — check and install the development toolchain
 - `make lint` / `make format` — check / apply ruff, mypy, markdownlint.
 - `make test` — run the pytest suite.
-- `make self-test` — capability evidence: index the package's own source with `duckdb-graph` and run a sequence of labelled requests (list files, list functions, change-impact traversal, cross-module symbol context, index overview, most-depended-upon hotspots), each printing a result and asserting a structural fact. Dogfoods the tool on a real multi-module codebase, distinct from the hermetic `make test` suite.
+- `make self-test` — capability evidence: index the package's own source with `duckdb-code` and run a sequence of labelled requests (list files, list functions, change-impact traversal, cross-module symbol context, index overview, most-depended-upon hotspots), each printing a result and asserting a structural fact. Dogfoods the tool on a real multi-module codebase, distinct from the hermetic `make test` suite.
 - `make build` — build the wheel and sdist (version from the git tag via hatch-vcs).
 
 ## Project structure
 
 ```text
-duckdb-graph/
-├── src/duckdb_graph/   # the package
-│   ├── store.py            # the GraphStore API
+duckdb-code/
+├── src/duckdb_code/   # the package
+│   ├── store.py            # the CodeStore API
 │   ├── indexer.py          # folder → DuckDB graph index
-│   ├── cli.py              # the duckdb-graph CLI (incl. the mcp verb)
+│   ├── cli.py              # the duckdb-code CLI (incl. the mcp verb)
 │   ├── mcp_server.py       # the MCP-over-stdio server
-│   ├── config.py           # Settings / DUCKDB_GRAPH_* env
+│   ├── config.py           # Settings / DUCKDB_CODE_* env
 │   ├── models.py           # Node / Edge / ImpactResult pydantic models
 │   ├── etag.py             # compute_etag content fingerprint
 │   └── extractors/         # pluggable extractors (python, javascript/typescript, markdown)
@@ -296,18 +296,18 @@ publishes to PyPI.
 ## Configuration
 
 Settings resolve with the precedence: explicit argument >
-`DUCKDB_GRAPH_*` environment variable > default.
+`DUCKDB_CODE_*` environment variable > default.
 
 | Setting | Argument | Environment variable | Default |
 | --- | --- | --- | --- |
-| Database path | `db_path` | `DUCKDB_GRAPH_DB_PATH` | `graph.duckdb` |
-| Indexed source root | `root` | `DUCKDB_GRAPH_ROOT` | `None` |
+| Database path | `db_path` | `DUCKDB_CODE_DB_PATH` | `code.duckdb` |
+| Indexed source root | `root` | `DUCKDB_CODE_ROOT` | `None` |
 
 ## Pointers
 
-- Worked examples: [documentation/examples.md](https://github.com/bernard357/duckdb-graph/blob/main/documentation/examples.md) — the `make self-test` requests, explained with observed results.
-- Documentation site: <https://bernard357.github.io/duckdb-graph/>
-- PyPI project: <https://pypi.org/project/duckdb-graph/>
+- Worked examples: [documentation/examples.md](https://github.com/bernard357/duckdb-code/blob/main/documentation/examples.md) — the `make self-test` requests, explained with observed results.
+- Documentation site: <https://bernard357.github.io/duckdb-code/>
+- PyPI project: <https://pypi.org/project/duckdb-code/>
 
 ## License
 

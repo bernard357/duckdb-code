@@ -24,13 +24,13 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     import pathspec
 
-from duckdb_graph.etag import compute_etag
-from duckdb_graph.extractors.base import Extraction
-from duckdb_graph.extractors.markdown import _slug
-from duckdb_graph.extractors.python import UNRESOLVED
-from duckdb_graph.extractors.registry import detect_language, resolve_extractor
-from duckdb_graph.models import Edge, Node
-from duckdb_graph.store import INDEX_DDL, SCHEMA_DDL, SCHEMA_VERSION, GraphStore
+from duckdb_code.etag import compute_etag
+from duckdb_code.extractors.base import Extraction
+from duckdb_code.extractors.markdown import _slug
+from duckdb_code.extractors.python import UNRESOLVED
+from duckdb_code.extractors.registry import detect_language, resolve_extractor
+from duckdb_code.models import Edge, Node
+from duckdb_code.store import INDEX_DDL, SCHEMA_DDL, SCHEMA_VERSION, CodeStore
 
 logger = logging.getLogger(__name__)
 
@@ -542,7 +542,7 @@ def _strip_ext(path: str) -> str:
 
 
 def index_folder(
-    store: GraphStore,
+    store: CodeStore,
     folder: str | Path,
     recursive: bool = True,
     *,
@@ -649,7 +649,7 @@ def _dedup_nodes(nodes: list[Node]) -> list[Node]:
 
 
 def _full_index(
-    store: GraphStore,
+    store: CodeStore,
     folder: Path,
     recursive: bool,
     *,
@@ -675,14 +675,14 @@ def _full_index(
     )
 
 
-def _db_is_populated(store: GraphStore) -> bool:
+def _db_is_populated(store: CodeStore) -> bool:
     """Return ``True`` when the ``files`` table already holds at least one row."""
     row = store._con.execute("SELECT COUNT(*) FROM files").fetchone()
     return bool(row and row[0] > 0)
 
 
 def _incremental_index(
-    store: GraphStore,
+    store: CodeStore,
     folder: Path,
     recursive: bool,
     *,
@@ -734,13 +734,13 @@ def _incremental_index(
     )
 
 
-def _stored_etags(store: GraphStore) -> dict[str, str]:
+def _stored_etags(store: CodeStore) -> dict[str, str]:
     """Return the ``{path: etag}`` map of the files currently in the database."""
     rows = store._con.execute("SELECT path, etag FROM files").fetchall()
     return {row[0]: row[1] for row in rows}
 
 
-def _noop_report(store: GraphStore, skipped: int, *, mode: str) -> IndexReport:
+def _noop_report(store: CodeStore, skipped: int, *, mode: str) -> IndexReport:
     """Build a no-change report from the whole-graph totals in the database."""
     con = store._con
     file_rows = con.execute("SELECT language FROM files").fetchall()
@@ -912,7 +912,7 @@ def _iter_files(
     return sorted(kept), excluded
 
 
-def _recreate_tables(store: GraphStore) -> None:
+def _recreate_tables(store: CodeStore) -> None:
     """Drop and recreate the content tables for a v1 full rebuild.
 
     Schema/index DDL is owned by the store so the indexer's recreation and
@@ -928,7 +928,7 @@ def _recreate_tables(store: GraphStore) -> None:
 
 
 def _write(
-    store: GraphStore,
+    store: CodeStore,
     file_rows: list[tuple[str, str, str]],
     nodes: list[Node],
     edges: list[Edge],
@@ -1053,7 +1053,7 @@ def _read_git_ref(git_dir: Path, ref: str) -> str | None:
 
 
 def _rebuild_file(
-    store: GraphStore,
+    store: CodeStore,
     path: str,
     extraction: Extraction,
     language: str,

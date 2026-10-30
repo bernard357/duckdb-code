@@ -1,6 +1,6 @@
 # Graph viewer example
 
-A self-contained web viewer that renders a `duckdb-graph` export (`graph.json`)
+A self-contained web viewer that renders a `duckdb-code` export (`graph.json`)
 with [Cytoscape.js](https://js.cytoscape.org/). It is a single `index.html`
 plus `app.js` — no build step, no server framework. The viewer shows a focused
 subgraph and grows it on demand: click a node to expand its one-hop
@@ -15,7 +15,7 @@ box. This is structural visualization; semantic/vector search is the sibling
 
 ## Prerequisites
 
-- `duckdb-graph` installed on your PATH (`pip install duckdb-graph`), only if
+- `duckdb-code` installed on your PATH (`pip install duckdb-code`), only if
   you want to regenerate `graph.json`.
 - A browser and a local static file server (the viewer `fetch`es `graph.json`,
   which browsers block over `file://`).
@@ -38,16 +38,16 @@ The committed export is generated from the Markdown fixture corpus. From the
 repository root:
 
 ```shell
-$ duckdb-graph index tests/fixtures/markdown --db graph.duckdb
-$ duckdb-graph export --db graph.duckdb --out examples/graph-viewer/graph.json
+$ duckdb-code index tests/fixtures/markdown --db code.duckdb
+$ duckdb-code export --db code.duckdb --out examples/graph-viewer/graph.json
 ```
 
 To view a code graph instead, index the package source and export over the same
 file:
 
 ```shell
-$ duckdb-graph index src/duckdb_graph --db graph.duckdb
-$ duckdb-graph export --db graph.duckdb --out examples/graph-viewer/graph.json
+$ duckdb-code index src/duckdb_code --db code.duckdb
+$ duckdb-code export --db code.duckdb --out examples/graph-viewer/graph.json
 ```
 
 The `.duckdb` file is throwaway and git-ignored; only `graph.json` is committed.
@@ -82,6 +82,6 @@ verified by hand. Serve the folder (above), open the page, and confirm:
   shape/colour swatch.
 - __Both domains render__: the committed Markdown export shows `page`,
   `heading`, and `tag` nodes with `links_to`/`tagged`/`defines` edges. After
-  regenerating from `src/duckdb_graph` (above), a code export shows
+  regenerating from `src/duckdb_code` (above), a code export shows
   `file`/`module`/`class`/`function`/`import` nodes with
   `calls`/`imports`/`inherits`/`references` edges, each with distinct styling.

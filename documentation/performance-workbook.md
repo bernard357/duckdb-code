@@ -1,6 +1,6 @@
 # Performance workbook
 
-How `duckdb-graph` behaves as a codebase grows, where it breaks, and the
+How `duckdb-code` behaves as a codebase grows, where it breaks, and the
 decisions that keep it fast. The numbers here come from indexing the author's
 `~/Public` tree (≈8,200 indexable files across a dozen repositories, ignored
 directories pruned) — a deliberately large, real-world target used to find the
@@ -13,7 +13,7 @@ limits.
 
 ## How to optimise performance? {#how-to-optimise}
 
-Three optimizations carry almost all of the speed `duckdb-graph` has on a large
+Three optimizations carry almost all of the speed `duckdb-code` has on a large
 tree, in priority order. The first is the one you tune; the other two are built
 in. Every figure below is measured on the `~/Public` tree (≈12 repositories);
 the sections after this one show the full before/after and the reasoning.
@@ -21,7 +21,7 @@ the sections after this one show the full before/after and the reasoning.
 ### 1. Avoid indexing what you don't need — tune `.gitignore`
 
 The cheapest work is the work never done, and the single biggest lever is
-_what you exclude_. `duckdb-graph` skips, by default, the `.git` directory, the
+_what you exclude_. `duckdb-code` skips, by default, the `.git` directory, the
 usual dependency/build directories (`node_modules`, `.venv`, `vendor`, `dist`,
 `build`, `__pycache__`, the `*_cache` dirs), files over 1 MB, and anything
 matched by a `.gitignore` or `.duckdbgraphignore` — honored __hierarchically__,
@@ -44,7 +44,7 @@ surfaces vendored or generated symbols:
   `.duckdbgraphignore` (gitignore syntax) in the relevant directory — e.g.
   ignore a large generated-fixtures tree, sample data, or a docs build output
   that git happens to track.
-- Verify with `duckdb-graph report`: the excluded files fold into the
+- Verify with `duckdb-code report`: the excluded files fold into the
   `skipped` count, and the node/edge totals should drop to the real source.
 - Only reach for `--no-default-ignores` when you deliberately want a vendored
   tree in the graph; `.gitignore`/`.duckdbgraphignore` are still honored even

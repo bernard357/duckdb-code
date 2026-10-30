@@ -1,4 +1,4 @@
-// Self-contained Cytoscape.js viewer for a duckdb-graph export (graph.json).
+// Self-contained Cytoscape.js viewer for a duckdb-code export (graph.json).
 //
 // The export carries the Cytoscape data contract from FEAT-001:
 //   nodes: [{ id, kind, name, qualified_name, path, language, start_line,

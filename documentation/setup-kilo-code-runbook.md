@@ -1,6 +1,6 @@
-# Set up duckdb-graph as an MCP server for Kilo Code
+# Set up duckdb-code as an MCP server for Kilo Code
 
-This runbook wires `duckdb-graph` into [Kilo Code](https://kilo.ai) — the AI
+This runbook wires `duckdb-code` into [Kilo Code](https://kilo.ai) — the AI
 coding extension for VS Code — as a local MCP server, so Kilo Code's agent gains
 a structural, queryable understanding of the code in a workspace. Once set up,
 the agent can ask the graph real questions instead of grepping blind:
@@ -21,7 +21,7 @@ answers structural, dependency-based questions.
 The setup has five stages:
 
 - [1. Identify the workspace](#stage-1)
-- [2. Install duckdb-graph locally](#stage-2)
+- [2. Install duckdb-code locally](#stage-2)
 - [3. Index the workspace](#stage-3)
 - [4. Configure Kilo Code's MCP](#stage-4)
 - [5. Keep the index fresh](#stage-5)
@@ -48,26 +48,26 @@ If VS Code has a __multi-root workspace__ (several folders), index each folder
 separately into its own database, or pick the one folder the agent should reason
 about.
 
-## 2. Install duckdb-graph locally {#stage-2}
+## 2. Install duckdb-code locally {#stage-2}
 
 With [uv](https://docs.astral.sh/uv/) there is nothing to install first: `uvx`
 fetches the package and its dependencies on the first run and reuses them after,
-so the MCP command in stage 4 can be a single `uvx duckdb-graph mcp …` with no
+so the MCP command in stage 4 can be a single `uvx duckdb-code mcp …` with no
 prior setup step. Run it once to confirm it resolves:
 
 ```shell
-$ uvx duckdb-graph --help
+$ uvx duckdb-code --help
 ```
 
-For a persistent `duckdb-graph` on `PATH` — which gives Kilo Code an absolute
+For a persistent `duckdb-code` on `PATH` — which gives Kilo Code an absolute
 command path to point at — install it as a uv tool instead:
 
 ```shell
-$ uv tool install duckdb-graph
-$ duckdb-graph --help
+$ uv tool install duckdb-code
+$ duckdb-code --help
 ```
 
-(`pip install duckdb-graph` into a virtual environment is the non-uv
+(`pip install duckdb-code` into a virtual environment is the non-uv
 equivalent.)
 
 __Running from a local clone.__ To run an unreleased build, run from a checkout
@@ -75,12 +75,12 @@ of the repository. With uv, point `--from` at the clone (or a git ref); nothing
 is installed:
 
 ```shell
-$ git clone https://github.com/bernard357/duckdb-graph.git
-$ uvx --from ./duckdb-graph duckdb-graph --help
-$ uvx --from git+https://github.com/bernard357/duckdb-graph duckdb-graph --help
+$ git clone https://github.com/bernard357/duckdb-code.git
+$ uvx --from ./duckdb-code duckdb-code --help
+$ uvx --from git+https://github.com/bernard357/duckdb-code duckdb-code --help
 ```
 
-An editable `pip install -e duckdb-graph` also works and links to the source so
+An editable `pip install -e duckdb-code` also works and links to the source so
 local edits take effect without reinstalling. The version resolves from the git
 tag (via `hatch-vcs`); a clone with no release tag yet reports a development
 version like `0.1.devN+g<commit>`, which is expected and does not affect
@@ -90,18 +90,18 @@ Verify the console script resolves and shows the seven verbs
 (`index`, `watch`, `report`, `impact`, `explain`, `export`, `mcp`):
 
 ```shell
-$ uvx duckdb-graph --help
+$ uvx duckdb-code --help
 ```
 
 If you chose `uv tool install` (or `pip`), note the __absolute path__ of the
-`duckdb-graph` executable — Kilo Code can use it in stage 4:
+`duckdb-code` executable — Kilo Code can use it in stage 4:
 
 ```shell
-$ which duckdb-graph
-/Users/you/.local/bin/duckdb-graph
+$ which duckdb-code
+/Users/you/.local/bin/duckdb-code
 ```
 
-With `uvx`, the stage-4 command is simply `uvx` with `duckdb-graph mcp …` as its
+With `uvx`, the stage-4 command is simply `uvx` with `duckdb-code mcp …` as its
 arguments — no absolute path needed.
 
 ## 3. Index the workspace {#stage-3}
@@ -111,19 +111,19 @@ git-ignorable folder under the workspace:
 
 ```shell
 $ cd /Users/you/projects/my-app
-$ mkdir -p .duckdb-graph
-$ duckdb-graph index . --db .duckdb-graph/graph.duckdb
+$ mkdir -p .duckdb-code
+$ duckdb-code index . --db .duckdb-code/code.duckdb
 Indexed 31 files (14 indexed, 17 skipped), 266 nodes, 741 edges.
 ```
 
 Keep the index out of version control:
 
 ```shell
-$ echo '.duckdb-graph/' >> .gitignore
+$ echo '.duckdb-code/' >> .gitignore
 ```
 
 By default the indexer never walks the noise that should not be in a code
-graph, which is why the `.duckdb-graph/` database and the node/edge counts stay
+graph, which is why the `.duckdb-code/` database and the node/edge counts stay
 small even on a large repository. It skips the `.git` directory and the common
 dependency/build/cache directories (`node_modules`, `.venv`/`venv`, `vendor`,
 `dist`, `build`, `__pycache__`, `.mypy_cache`, `.pytest_cache`, `.ruff_cache`),
@@ -139,8 +139,8 @@ Verify the graph was built — non-zero node and edge counts across the language
 present:
 
 ```shell
-$ duckdb-graph report --db .duckdb-graph/graph.duckdb
-Database      : .duckdb-graph/graph.duckdb
+$ duckdb-code report --db .duckdb-code/code.duckdb
+Database      : .duckdb-code/code.duckdb
 Schema version: 1
 Roots         : .
 Languages     : python
@@ -160,7 +160,7 @@ read-write, and the MCP server keeps it fresh (stage 5).
 
 ## 4. Configure Kilo Code's MCP {#stage-4}
 
-Kilo Code launches `duckdb-graph mcp` as a local stdio child process and talks
+Kilo Code launches `duckdb-code mcp` as a local stdio child process and talks
 to it over stdin/stdout. Configure it through the extension UI — this is the
 primary path, because Kilo Code's MCP settings file is created and edited by
 this UI on first use (there is no file to hand-edit beforehand).
@@ -170,14 +170,14 @@ choose __Local (stdio)__. Enter:
 
 | Field | Value |
 | --- | --- |
-| Name | `duckdb-graph` |
-| Command | `uvx` (no install), or the absolute path from `which duckdb-graph` if you used `uv tool install` / `pip` (e.g. `/Users/you/.local/bin/duckdb-graph`) |
-| Arguments | with `uvx`: `duckdb-graph`, `mcp`, `--db`, `/Users/you/projects/my-app/.duckdb-graph/graph.duckdb`, `--index`, `/Users/you/projects/my-app` — with the absolute path, drop the leading `duckdb-graph` |
+| Name | `duckdb-code` |
+| Command | `uvx` (no install), or the absolute path from `which duckdb-code` if you used `uv tool install` / `pip` (e.g. `/Users/you/.local/bin/duckdb-code`) |
+| Arguments | with `uvx`: `duckdb-code`, `mcp`, `--db`, `/Users/you/projects/my-app/.duckdb-code/code.duckdb`, `--index`, `/Users/you/projects/my-app` — with the absolute path, drop the leading `duckdb-code` |
 
-With `uvx` as the command, the first argument is `duckdb-graph` (the package to
+With `uvx` as the command, the first argument is `duckdb-code` (the package to
 run), then the verb and its options; uv fetches and caches the package on first
 launch, so there is no install step. With an absolute executable path, omit
-that leading `duckdb-graph` argument.
+that leading `duckdb-code` argument.
 
 Pass `--index <workspace>` so the server indexes the workspace on startup: the
 graph is built when the database is empty and refreshed incrementally
@@ -195,14 +195,14 @@ illustrative). With `uvx` — nothing installed ahead of time:
 ```json
 {
   "mcp": {
-    "duckdb-graph": {
+    "duckdb-code": {
       "type": "local",
       "command": [
         "uvx",
-        "duckdb-graph",
+        "duckdb-code",
         "mcp",
         "--db",
-        "/Users/you/projects/my-app/.duckdb-graph/graph.duckdb",
+        "/Users/you/projects/my-app/.duckdb-code/code.duckdb",
         "--index",
         "/Users/you/projects/my-app"
       ]
@@ -216,13 +216,13 @@ Or, with a `uv tool install`ed (or `pip`-installed) absolute executable path:
 ```json
 {
   "mcp": {
-    "duckdb-graph": {
+    "duckdb-code": {
       "type": "local",
       "command": [
-        "/Users/you/.local/bin/duckdb-graph",
+        "/Users/you/.local/bin/duckdb-code",
         "mcp",
         "--db",
-        "/Users/you/projects/my-app/.duckdb-graph/graph.duckdb",
+        "/Users/you/projects/my-app/.duckdb-code/code.duckdb",
         "--index",
         "/Users/you/projects/my-app"
       ]
@@ -237,12 +237,12 @@ server's environment instead:
 ```json
 {
   "mcp": {
-    "duckdb-graph": {
+    "duckdb-code": {
       "type": "local",
-      "command": ["/Users/you/.local/bin/duckdb-graph", "mcp"],
+      "command": ["/Users/you/.local/bin/duckdb-code", "mcp"],
       "env": {
-        "DUCKDB_GRAPH_DB_PATH": "/Users/you/projects/my-app/.duckdb-graph/graph.duckdb",
-        "DUCKDB_GRAPH_ROOT": "/Users/you/projects/my-app"
+        "DUCKDB_CODE_DB_PATH": "/Users/you/projects/my-app/.duckdb-code/code.duckdb",
+        "DUCKDB_CODE_ROOT": "/Users/you/projects/my-app"
       }
     }
   }
@@ -250,12 +250,12 @@ server's environment instead:
 ```
 
 On __Windows__, a local command is wrapped through `cmd`: set the command to
-`cmd` and pass `/c`, `duckdb-graph`, `mcp`, `--db`, `<path>`, `--index`,
+`cmd` and pass `/c`, `duckdb-code`, `mcp`, `--db`, `<path>`, `--index`,
 `<workspace>` as the arguments (per the Kilo Code MCP docs).
 
-__Verify:__ after adding the server, Kilo Code lists `duckdb-graph` under its MCP
+__Verify:__ after adding the server, Kilo Code lists `duckdb-code` under its MCP
 servers with the three tools — `impact`, `explain`, `report`. Ask the agent a
-question that exercises one, e.g. "use duckdb-graph to show what depends on
+question that exercises one, e.g. "use duckdb-code to show what depends on
 `<a symbol in your code>`", and confirm it returns the reverse-dependency set.
 
 See the [Kilo Code MCP documentation](https://kilo.ai/docs/automate/mcp/using-in-kilo-code)
@@ -271,17 +271,17 @@ serving without `--index`. Re-indexing is incremental by default — only
 changed, added, and deleted files are reconciled — so it is cheap to re-run:
 
 ```shell
-$ duckdb-graph index . --db .duckdb-graph/graph.duckdb
+$ duckdb-code index . --db .duckdb-code/code.duckdb
 Incremental: 1 rebuilt, 0 deleted, 31 files (14 indexed, 17 skipped), ...
 ```
 
-__Automatic: `duckdb-graph watch` (recommended).__ Run the watcher as a
+__Automatic: `duckdb-code watch` (recommended).__ Run the watcher as a
 long-running process; it re-indexes incrementally on every relevant file change,
 so the index — and the MCP server reading it — stays current with no manual
 step:
 
 ```shell
-$ duckdb-graph watch . --db .duckdb-graph/graph.duckdb
+$ duckdb-code watch . --db .duckdb-code/code.duckdb
 Watching . (initial: 266 nodes, 741 edges). Press Ctrl-C to stop.
 Re-indexed: 1 rebuilt, 0 deleted, 267 nodes, 742 edges.
 ```
@@ -309,7 +309,7 @@ Palette (or bind a key):
     {
       "label": "Reindex code graph",
       "type": "shell",
-      "command": "duckdb-graph index . --db .duckdb-graph/graph.duckdb",
+      "command": "duckdb-code index . --db .duckdb-code/code.duckdb",
       "problemMatcher": []
     }
   ]
@@ -322,25 +322,25 @@ executable:
 
 ```shell
 #!/bin/sh
-duckdb-graph index . --db .duckdb-graph/graph.duckdb
+duckdb-code index . --db .duckdb-code/code.duckdb
 ```
 
 Branch switches are handled either way: `index` records the current branch and
-HEAD commit in the database (visible in `duckdb-graph report` as a `Branch`
+HEAD commit in the database (visible in `duckdb-code report` as a `Branch`
 line), and the incremental re-index reconciles the files that differ between
 branches — so after `git checkout` a re-index (manual, watched, or via the
 `post-checkout` hook above) brings the graph to the new branch's state.
 
 ## Troubleshooting {#troubleshooting}
 
-__`duckdb-graph: command not found`.__ The console script is not on `PATH`.
+__`duckdb-code: command not found`.__ The console script is not on `PATH`.
 Activate the environment where you installed it, or use the absolute path from
-`which duckdb-graph` (and use that absolute path in the Kilo Code command).
+`which duckdb-code` (and use that absolute path in the Kilo Code command).
 
 __Kilo Code does not list the tools.__ Re-check the Settings → MCP entry: the
 command must be the absolute executable path, the transport Local (stdio), and
 the `--db` and `--index` paths absolute. Confirm the same command runs in a
-terminal: `duckdb-graph mcp --db <abs-path> --index <abs-workspace>` should
+terminal: `duckdb-code mcp --db <abs-path> --index <abs-workspace>` should
 index then start without error (Ctrl-C to stop); the startup `indexed …` line
 is printed to stderr.
 
@@ -349,16 +349,16 @@ mostly in unsupported languages — only `.py`, `.pyi`, `.js`, `.jsx`, `.mjs`,
 `.cjs`, `.ts`, `.tsx`, `.md`, `.markdown` are indexed; everything else is
 silently skipped — or the source you expected is excluded by an ignore rule
 (a `.gitignore` entry, a dependency/build directory, or the 1 MB size cap).
-Check `duckdb-graph report --db <path>`: a high "skipped" count or a missing
+Check `duckdb-code report --db <path>`: a high "skipped" count or a missing
 language explains a thin graph. If real source is being excluded, re-index with
 `--no-default-ignores` (which still honors `.gitignore`), or adjust the
 workspace `.gitignore` / `.duckdbgraphignore`.
 
 __Stale results.__ The agent sees the graph as of the last build. With
 `--index` the server refreshes on startup, so restart it; otherwise re-run
-`duckdb-graph index` or run `watch` (stage 5) after changing files.
+`duckdb-code index` or run `watch` (stage 5) after changing files.
 
 __The graph is not refreshing mid-session.__ The `--index` build runs once at
 startup, not continuously — it is not a watcher. Restart the MCP server to
-rebuild, or run `duckdb-graph watch` to keep the graph current live, or pass
+rebuild, or run `duckdb-code watch` to keep the graph current live, or pass
 `--no-startup-index` to serve a prebuilt database as a frozen snapshot.

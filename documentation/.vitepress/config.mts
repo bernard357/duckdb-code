@@ -4,16 +4,16 @@ import { withMermaid } from 'vitepress-plugin-mermaid'
 // https://vitepress.dev/reference/site-config
 //
 // A documentation site over the existing documentation/ pages — a curated
-// sidebar, local search, and the duckdb-graph house skin. No blog
+// sidebar, local search, and the duckdb-code house skin. No blog
 // machinery: no state filter, no Atom feed, no post components.
 export default withMermaid(
   defineConfig({
-    title: 'duckdb-graph',
+    title: 'duckdb-code',
     description:
       'A frugal, embeddable code-graph building block for agentic systems — tree-sitter impact analysis and structure explanation over a local DuckDB file.',
-    // Served from the project Pages URL bernard357.github.io/duckdb-graph/.
+    // Served from the project Pages URL bernard357.github.io/duckdb-code/.
     // If a custom domain is added later, this flips to '/'.
-    base: '/duckdb-graph/',
+    base: '/duckdb-code/',
     lang: 'en-US',
     cleanUrls: true,
     lastUpdated: true,
@@ -34,17 +34,17 @@ export default withMermaid(
     themeConfig: {
       // https://vitepress.dev/reference/default-theme-config
       nav: [
-        { text: 'PyPI', link: 'https://pypi.org/project/duckdb-graph/' },
+        { text: 'PyPI', link: 'https://pypi.org/project/duckdb-code/' },
         {
           text: 'GitHub',
-          link: 'https://github.com/bernard357/duckdb-graph',
+          link: 'https://github.com/bernard357/duckdb-code',
         },
       ],
       sidebar: [
         {
           text: 'Start here',
           items: [
-            { text: 'User guide', link: '/duckdb-graph-guide' },
+            { text: 'User guide', link: '/duckdb-code-guide' },
             { text: 'Examples', link: '/examples' },
             { text: 'Graph viewer', link: '/graph-viewer-guide' },
             { text: 'Developer workbook', link: '/developer-workbook' },
@@ -71,7 +71,7 @@ export default withMermaid(
       socialLinks: [
         {
           icon: 'github',
-          link: 'https://github.com/bernard357/duckdb-graph',
+          link: 'https://github.com/bernard357/duckdb-code',
         },
       ],
     },

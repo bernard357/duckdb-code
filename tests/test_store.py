@@ -9,22 +9,22 @@ contract.
 
 from pathlib import Path
 
-from duckdb_graph.indexer import index_folder
-from duckdb_graph.store import GraphStore
+from duckdb_code.indexer import index_folder
+from duckdb_code.store import CodeStore
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample"
 MARKDOWN_FIXTURE = Path(__file__).parent / "fixtures" / "markdown"
 
 
-def _indexed(tmp_path) -> GraphStore:
+def _indexed(tmp_path) -> CodeStore:
     """Open a writable store, index the fixture, return it (root = fixture)."""
-    store = GraphStore(db_path=str(tmp_path / "graph.duckdb"), root=str(FIXTURE))
+    store = CodeStore(db_path=str(tmp_path / "code.duckdb"), root=str(FIXTURE))
     index_folder(store, FIXTURE)
     return store
 
 
-def _indexed_markdown(tmp_path) -> GraphStore:
-    store = GraphStore(db_path=str(tmp_path / "kg.duckdb"), root=str(MARKDOWN_FIXTURE))
+def _indexed_markdown(tmp_path) -> CodeStore:
+    store = CodeStore(db_path=str(tmp_path / "kg.duckdb"), root=str(MARKDOWN_FIXTURE))
     index_folder(store, MARKDOWN_FIXTURE)
     return store
 
@@ -212,7 +212,7 @@ def test_report_aggregates_kinds_languages_and_roots(tmp_path):
 def test_report_empty_index_returns_empty_shape(tmp_path):
     empty_dir = tmp_path / "empty"
     empty_dir.mkdir()
-    store = GraphStore(db_path=str(tmp_path / "empty.duckdb"), root=str(empty_dir))
+    store = CodeStore(db_path=str(tmp_path / "empty.duckdb"), root=str(empty_dir))
     index_folder(store, empty_dir)
     report = store.report()
     assert report.nodes_by_kind == {}
@@ -300,7 +300,7 @@ def test_tag_nodes_are_corpus_global_and_tagged_edges_resolve(tmp_path):
 def test_markdown_link_never_binds_to_a_code_node_end_to_end(tmp_path):
     # Index markdown and code into one store; a markdown links_to edge must
     # never point at a code node, and no code edge points at a page node.
-    store = GraphStore(db_path=str(tmp_path / "mixed.duckdb"))
+    store = CodeStore(db_path=str(tmp_path / "mixed.duckdb"))
     index_folder(store, MARKDOWN_FIXTURE)
     # Second folder: re-index code on top would rebuild; instead assert on the
     # markdown-only graph that every links_to/embeds dst is a page.
@@ -314,20 +314,20 @@ def test_markdown_link_never_binds_to_a_code_node_end_to_end(tmp_path):
 
 
 def test_reopened_store_allows_writes(tmp_path):
-    db_path = str(tmp_path / "graph.duckdb")
+    db_path = str(tmp_path / "code.duckdb")
     writer = _indexed_at(db_path)
     writer.close()
 
     # The store always opens read-write: a second process can reopen the same
     # file and re-index it without a guard rejecting the write.
-    reopened = GraphStore(db_path=db_path, root=str(FIXTURE))
+    reopened = CodeStore(db_path=db_path, root=str(FIXTURE))
     report = index_folder(reopened, FIXTURE)
     assert report.nodes > 0
     reopened.close()
 
 
-def _indexed_at(db_path: str) -> GraphStore:
-    store = GraphStore(db_path=db_path, root=str(FIXTURE))
+def _indexed_at(db_path: str) -> CodeStore:
+    store = CodeStore(db_path=db_path, root=str(FIXTURE))
     index_folder(store, FIXTURE)
     return store
 
@@ -337,7 +337,7 @@ def test_store_index_method_delegates_full_then_incremental(tmp_path):
 
     work = tmp_path / "tree"
     shutil.copytree(FIXTURE, work)
-    store = GraphStore(db_path=str(tmp_path / "graph.duckdb"), root=str(work))
+    store = CodeStore(db_path=str(tmp_path / "code.duckdb"), root=str(work))
 
     first = store.index(work)
     assert first.mode == "full"
@@ -397,12 +397,12 @@ def test_export_serialized_keys_are_cytoscape_shape(tmp_path):
 
 
 def test_export_runs_on_reopened_store(tmp_path):
-    db_path = str(tmp_path / "graph.duckdb")
+    db_path = str(tmp_path / "code.duckdb")
     writer = _indexed_at(db_path)
     writer_export = writer.export()
     writer.close()
 
-    reader = GraphStore(db_path=db_path)
+    reader = CodeStore(db_path=db_path)
     export = reader.export()
     assert len(export.nodes) == len(writer_export.nodes)
     assert len(export.edges) == len(writer_export.edges)
@@ -414,7 +414,7 @@ def test_store_incremental_keeps_impact_correct_after_edit(tmp_path):
 
     work = tmp_path / "tree"
     shutil.copytree(FIXTURE, work)
-    store = GraphStore(db_path=str(tmp_path / "graph.duckdb"), root=str(work))
+    store = CodeStore(db_path=str(tmp_path / "code.duckdb"), root=str(work))
     store.index(work)
 
     # Edit charge.py (shifts the Base/Charge node ids); the incremental run must

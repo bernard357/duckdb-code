@@ -9,8 +9,8 @@ performance change cannot silently alter the graph.
 
 from pathlib import Path
 
-from duckdb_graph.indexer import _extract_folder, resolve_edges
-from duckdb_graph.models import Edge, Node
+from duckdb_code.indexer import _extract_folder, resolve_edges
+from duckdb_code.models import Edge, Node
 
 FIXTURES = [
     Path(__file__).parent / "fixtures" / "sample",
@@ -35,7 +35,7 @@ def test_resolution_matches_brute_force_reference():
     The reference monkeypatches the last-segment lookup back into the old
     full-``by_qn`` scan form, so any divergence in membership OR order surfaces.
     """
-    import duckdb_graph.indexer as idx
+    import duckdb_code.indexer as idx
 
     for folder in FIXTURES:
         nodes, edges = _extract(folder)

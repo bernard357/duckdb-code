@@ -2,7 +2,7 @@
 
 from unittest import mock
 
-from duckdb_graph.config import DEFAULT_DB_PATH, Settings
+from duckdb_code.config import DEFAULT_DB_PATH, Settings
 
 
 def test_defaults_apply_when_nothing_set():
@@ -14,8 +14,8 @@ def test_defaults_apply_when_nothing_set():
 
 def test_environment_overrides_default():
     env = {
-        "DUCKDB_GRAPH_DB_PATH": "/tmp/env.duckdb",
-        "DUCKDB_GRAPH_ROOT": "/tmp/src",
+        "DUCKDB_CODE_DB_PATH": "/tmp/env.duckdb",
+        "DUCKDB_CODE_ROOT": "/tmp/src",
     }
     with mock.patch.dict("os.environ", env, clear=True):
         settings = Settings()
@@ -25,8 +25,8 @@ def test_environment_overrides_default():
 
 def test_constructor_overrides_environment():
     env = {
-        "DUCKDB_GRAPH_DB_PATH": "/tmp/env.duckdb",
-        "DUCKDB_GRAPH_ROOT": "/tmp/src",
+        "DUCKDB_CODE_DB_PATH": "/tmp/env.duckdb",
+        "DUCKDB_CODE_ROOT": "/tmp/src",
     }
     with mock.patch.dict("os.environ", env, clear=True):
         settings = Settings(db_path="/tmp/explicit.duckdb", root="/tmp/other")

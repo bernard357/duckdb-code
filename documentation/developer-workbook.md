@@ -1,10 +1,10 @@
 # Developer workbook
 
-Questions and answers for contributors to the `duckdb-graph` project:
+Questions and answers for contributors to the `duckdb-code` project:
 prerequisites, setup, the Makefile workflow, testing, project principles, how to
 add an extractor, and how changes land.
 
-You may also look at the [user guide](duckdb-graph-guide.md) and the
+You may also look at the [user guide](duckdb-code-guide.md) and the
 [examples](examples.md) for more information.
 
 ## What are good first contributions?
@@ -36,7 +36,7 @@ Contributions land fastest when they fit the project's shape:
 The extractor registry is the main extension point. An extractor parses one
 language family with tree-sitter and emits the graph's nodes (`file`, `module`,
 `class`, `function`, `import`) and edges (`defines`, `calls`, `inherits`,
-`references`, `imports`). See `src/duckdb_graph/extractors/` for the base, the
+`references`, `imports`). See `src/duckdb_code/extractors/` for the base, the
 registry, and the Python and JavaScript/TypeScript examples. Register your
 extractor in the registry so the indexer picks it up for the file types it
 claims, and keep heavy parser dependencies in step with the project's existing
@@ -78,7 +78,7 @@ and installs the rest.
 
 Ruff, mypy, and pytest are not prerequisites — `make setup` installs them into
 the virtual environment via the `[dev]` extra. There is no Docker or hadolint
-step: `duckdb-graph` ships no Dockerfile.
+step: `duckdb-code` ships no Dockerfile.
 
 ## What does each Makefile target do?
 
@@ -102,8 +102,8 @@ and `make clean-documentation`.
 ## How do I set up a development environment?
 
 ```shell
-$ git clone https://github.com/bernard357/duckdb-graph.git
-$ cd duckdb-graph
+$ git clone https://github.com/bernard357/duckdb-code.git
+$ cd duckdb-code
 $ make setup   # checks prerequisites, creates the venv, installs tooling
 ```
 
@@ -114,9 +114,9 @@ yourself.
 
 `make setup` is the __contributor__ path: an editable install with the dev
 extras (ruff, mypy, pytest) for running the suite and the linters. It is
-distinct from the __end-user__ install story, which is `uvx duckdb-graph` (or
-`uv tool install duckdb-graph`) and pulls only the runtime dependencies on
-demand — see the [README](https://github.com/bernard357/duckdb-graph#install-and-run)
+distinct from the __end-user__ install story, which is `uvx duckdb-code` (or
+`uv tool install duckdb-code`) and pulls only the runtime dependencies on
+demand — see the [README](https://github.com/bernard357/duckdb-code#install-and-run)
 and the [Kilo Code runbook](setup-kilo-code-runbook.md). Reach for `make setup`
 when you are changing the package, not when you are only running it.
 
@@ -126,7 +126,7 @@ when you are changing the package, not when you are only running it.
 $ make lint        # ruff check + ruff format --check + mypy, markdownlint
 ```
 
-Python (Ruff lint and format, plus mypy type checking over `src/duckdb_graph`)
+Python (Ruff lint and format, plus mypy type checking over `src/duckdb_code`)
 and Markdown (markdownlint via `.markdownlint.json`). There is no Dockerfile
 lint — the package ships no Dockerfile. Use `make format` to apply Python
 formatting. All checks should pass before you open a pull request.
@@ -139,7 +139,7 @@ $ make self-test   # dogfood: index the package's own source
 ```
 
 `make test` is the hermetic suite under `tests/`. `make self-test` indexes the
-package's own `src/duckdb_graph/` tree into a throwaway database and runs a
+package's own `src/duckdb_code/` tree into a throwaway database and runs a
 sequence of labelled requests, each printing a result and asserting a structural
 fact — living evidence that the tool works on a real multi-module codebase. Add
 a test for any behavior you change or add.

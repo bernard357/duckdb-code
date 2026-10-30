@@ -1,4 +1,4 @@
-"""Core data models for duckdb-graph.
+"""Core data models for duckdb-code.
 
 All models are pydantic ``BaseModel``. Node ``kind``, edge ``kind``, and
 ``resolution`` are kept as plain strings (not enums) so a future language can
@@ -141,7 +141,7 @@ class Report(BaseModel):
     head_commit: str | None = None
 
 
-class GraphExportNode(BaseModel):
+class CodeExportNode(BaseModel):
     """A node in the Cytoscape-shaped graph export.
 
     The stored :class:`Node` key ``node_id`` is deliberately renamed to ``id``
@@ -160,7 +160,7 @@ class GraphExportNode(BaseModel):
     end_line: int
 
 
-class GraphExportEdge(BaseModel):
+class CodeExportEdge(BaseModel):
     """An edge in the Cytoscape-shaped graph export.
 
     The stored :class:`Edge` keys ``src_id`` and ``dst_id`` are deliberately
@@ -176,7 +176,7 @@ class GraphExportEdge(BaseModel):
     resolution: str
 
 
-class GraphExport(BaseModel):
+class CodeExport(BaseModel):
     """The whole graph serialized for the viewer in the Cytoscape data contract.
 
     ``meta`` is the :class:`Report` introspection; ``nodes`` and ``edges`` carry
@@ -185,5 +185,5 @@ class GraphExport(BaseModel):
     """
 
     meta: Report
-    nodes: list[GraphExportNode]
-    edges: list[GraphExportEdge]
+    nodes: list[CodeExportNode]
+    edges: list[CodeExportEdge]

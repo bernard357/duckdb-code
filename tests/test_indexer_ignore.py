@@ -10,17 +10,17 @@ sibling ``.git`` at test time for the same reason.
 import shutil
 from pathlib import Path
 
-from duckdb_graph.indexer import _DEFAULT_MAX_FILE_BYTES, index_folder
-from duckdb_graph.store import GraphStore
+from duckdb_code.indexer import _DEFAULT_MAX_FILE_BYTES, index_folder
+from duckdb_code.store import CodeStore
 
 MARKDOWN_CORPUS = Path(__file__).parent / "fixtures" / "ignore-markdown"
 
 
-def _store(tmp_path) -> GraphStore:
-    return GraphStore(db_path=str(tmp_path / "graph.duckdb"))
+def _store(tmp_path) -> CodeStore:
+    return CodeStore(db_path=str(tmp_path / "code.duckdb"))
 
 
-def _node_paths(store: GraphStore) -> set[str]:
+def _node_paths(store: CodeStore) -> set[str]:
     rows = store._con.execute("SELECT DISTINCT path FROM nodes").fetchall()
     return {row[0] for row in rows}
 

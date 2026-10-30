@@ -18,9 +18,9 @@ code blocks.
 import re
 from pathlib import PurePosixPath
 
-from duckdb_graph.extractors.base import Extraction
-from duckdb_graph.extractors.python import UNRESOLVED
-from duckdb_graph.models import Edge, Node
+from duckdb_code.extractors.base import Extraction
+from duckdb_code.extractors.python import UNRESOLVED
+from duckdb_code.models import Edge, Node
 
 _WIKILINK = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]*)?\]\]")
 _TAG = re.compile(r"(?:(?<=\s)|^)#([A-Za-z][\w/-]*)")

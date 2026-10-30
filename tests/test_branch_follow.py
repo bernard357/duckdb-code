@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from duckdb_graph.indexer import _git_revision
-from duckdb_graph.store import GraphStore
+from duckdb_code.indexer import _git_revision
+from duckdb_code.store import CodeStore
 
 git = shutil.which("git")
 pytestmark = pytest.mark.skipif(git is None, reason="git not available")
@@ -55,7 +55,7 @@ def _init_repo(tmp_path: Path) -> Path:
 
 
 def _functions(db: str) -> set[str]:
-    store = GraphStore(db_path=db)
+    store = CodeStore(db_path=db)
     try:
         return {
             r[0]
@@ -74,7 +74,7 @@ def test_index_records_branch_and_head(tmp_path):
     assert head and len(head) >= 7
 
     db = str(tmp_path / "g.duckdb")
-    store = GraphStore(db_path=db)
+    store = CodeStore(db_path=db)
     try:
         store.index(repo)
         report = store.report()
@@ -90,7 +90,7 @@ def test_reindex_follows_branch_switch(tmp_path):
     repo = _init_repo(tmp_path)
     db = str(tmp_path / "g.duckdb")
 
-    store = GraphStore(db_path=db)
+    store = CodeStore(db_path=db)
     try:
         store.index(repo)
     finally:
@@ -99,7 +99,7 @@ def test_reindex_follows_branch_switch(tmp_path):
 
     _run(repo, "checkout", "feature")
 
-    store = GraphStore(db_path=db)
+    store = CodeStore(db_path=db)
     try:
         store.index(repo)  # incremental; etag diff reconciles the switch
         report = store.report()
@@ -118,7 +118,7 @@ def test_non_git_folder_is_a_noop(tmp_path):
     (plain / "mod.py").write_text("def f():\n    return 1\n")
     assert _git_revision(plain) == (None, None)
     db = str(tmp_path / "g.duckdb")
-    store = GraphStore(db_path=db)
+    store = CodeStore(db_path=db)
     try:
         store.index(plain)
         report = store.report()

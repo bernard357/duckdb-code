@@ -1,7 +1,7 @@
-"""MCP-over-stdio server exposing duckdb-graph query tools.
+"""MCP-over-stdio server exposing duckdb-code query tools.
 
 Any MCP client (Docker Agent, Claude Desktop, Claude Code, Cursor) can spawn
-``duckdb-graph mcp`` as a subprocess and call the four tools ``impact``,
+``duckdb-code mcp`` as a subprocess and call the four tools ``impact``,
 ``explain``, ``report``, and ``export``. The server also advertises a
 ``description`` and ``instructions`` so a client can route to it and pick a
 tool by intent. The server is built on the official ``mcp`` SDK.
@@ -27,8 +27,8 @@ from pathlib import Path
 
 from mcp.server.mcpserver import MCPServer
 
-from duckdb_graph.config import Settings
-from duckdb_graph.store import GraphStore
+from duckdb_code.config import Settings
+from duckdb_code.store import CodeStore
 
 # Inline JSON is only returned when the graph is at or under this node+edge
 # count. A full index runs to ~100k edges / tens of MB of JSON — far past what
@@ -56,16 +56,16 @@ def _described(server: MCPServer) -> Callable:
 
 
 def build_server(settings: Settings | None = None) -> MCPServer:
-    """Build the MCP server and register the code-graph query tools.
+    """Build the MCP server and register the code-intelligence query tools.
 
     A single :class:`Settings` is resolved once (honoring the
-    ``DUCKDB_GRAPH_*`` environment variables and any ``db`` passed from the
+    ``DUCKDB_CODE_*`` environment variables and any ``db`` passed from the
     CLI verb) and reused by every tool call, each opening its own
-    :class:`GraphStore`.
+    :class:`CodeStore`.
     """
     resolved = settings or Settings()
     server: MCPServer = MCPServer(
-        name="duckdb-graph",
+        name="duckdb-code",
         description=(
             "Indexes the structure of a codebase into a local graph and answers "
             "questions about the relationships across its symbols and files."
@@ -123,7 +123,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
 
         An unresolved target returns empty ``resolved`` and ``affected``.
         """
-        store = GraphStore(settings=resolved)
+        store = CodeStore(settings=resolved)
         try:
             return store.impact(target, depth=depth).model_dump()
         finally:
@@ -158,7 +158,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
 
         An unresolved target returns empty ``resolved`` and ``explanations``.
         """
-        store = GraphStore(settings=resolved)
+        store = CodeStore(settings=resolved)
         try:
             return store.explain(target).model_dump()
         finally:
@@ -186,7 +186,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         - branch / head_commit: the git branch and commit the index was built
           from, or null when the source was not a git working tree.
         """
-        store = GraphStore(settings=resolved)
+        store = CodeStore(settings=resolved)
         try:
             return store.report().model_dump()
         finally:
@@ -219,7 +219,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         graph is small enough, it returns {graph (the full {meta, nodes, edges}
         document), node_count, edge_count, meta}.
         """
-        store = GraphStore(settings=resolved)
+        store = CodeStore(settings=resolved)
         try:
             result = store.export()
         finally:
@@ -242,7 +242,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         if out is not None:
             path = Path(out)
         else:
-            fd, tmp_name = tempfile.mkstemp(suffix=".json", prefix="duckdb-graph-")
+            fd, tmp_name = tempfile.mkstemp(suffix=".json", prefix="duckdb-code-")
             os.close(fd)
             path = Path(tmp_name)
         path.write_text(result.model_dump_json(indent=2), encoding="utf-8")

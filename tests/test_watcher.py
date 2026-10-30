@@ -8,8 +8,8 @@ delete is simulated by editing a temp workspace and yielding the changed path.
 import shutil
 from pathlib import Path
 
-from duckdb_graph.store import GraphStore
-from duckdb_graph.watcher import _is_relevant_change, watch
+from duckdb_code.store import CodeStore
+from duckdb_code.watcher import _is_relevant_change, watch
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample"
 
@@ -24,12 +24,12 @@ def test_watch_reindexes_on_a_relevant_change(tmp_path):
     """A single relevant change batch triggers exactly one incremental run."""
     ws = _copy_workspace(tmp_path)
     db = str(tmp_path / "w.duckdb")
-    store = GraphStore(db_path=db)
+    store = CodeStore(db_path=db)
     reports = []
 
-    # Build the initial index first, as `duckdb-graph watch` does, so the
+    # Build the initial index first, as `duckdb-code watch` does, so the
     # watcher's triggered run is a genuine incremental re-index.
-    from duckdb_graph.indexer import index_folder
+    from duckdb_code.indexer import index_folder
 
     index_folder(store, ws, rebuild=False)
 
@@ -54,7 +54,7 @@ def test_watch_reindexes_on_a_relevant_change(tmp_path):
     assert report.mode == "incremental"
     assert report.rebuilt >= 1
     # The new function is now in the graph.
-    store = GraphStore(db_path=db)
+    store = CodeStore(db_path=db)
     try:
         names = {
             row[0]
@@ -71,7 +71,7 @@ def test_watch_skips_ignored_directory_churn(tmp_path):
     """Changes under a default-ignored dir do not trigger a re-index."""
     ws = _copy_workspace(tmp_path)
     db = str(tmp_path / "w.duckdb")
-    store = GraphStore(db_path=db)
+    store = CodeStore(db_path=db)
     reports = []
 
     node_modules = ws / "node_modules"

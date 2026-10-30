@@ -3,9 +3,9 @@
 This module owns the authoritative schema DDL (:data:`SCHEMA_DDL` and
 :data:`INDEX_DDL`) so the indexer's table recreation and the store's
 ``_ensure_schema`` can never drift. It also exposes the three query agentic
-tools over the graph: :meth:`GraphStore.impact` (transitive reverse
-dependencies), :meth:`GraphStore.explain` (one node's structural
-neighbourhood), and :meth:`GraphStore.report` (pure aggregation).
+tools over the graph: :meth:`CodeStore.impact` (transitive reverse
+dependencies), :meth:`CodeStore.explain` (one node's structural
+neighbourhood), and :meth:`CodeStore.report` (pure aggregation).
 
 The store always opens read-write: incremental updates are the rule for this
 package, so the file is opened writable and the schema is ensured on every
@@ -19,14 +19,14 @@ from typing import TYPE_CHECKING
 
 import duckdb
 
-from duckdb_graph.config import Settings
-from duckdb_graph.extractors.registry import EXTENSION_LANGUAGE
-from duckdb_graph.models import (
+from duckdb_code.config import Settings
+from duckdb_code.extractors.registry import EXTENSION_LANGUAGE
+from duckdb_code.models import (
+    CodeExport,
+    CodeExportEdge,
+    CodeExportNode,
     Explanation,
     ExplanationResult,
-    GraphExport,
-    GraphExportEdge,
-    GraphExportNode,
     ImpactNode,
     ImpactResult,
     Node,
@@ -34,7 +34,7 @@ from duckdb_graph.models import (
 )
 
 if TYPE_CHECKING:
-    from duckdb_graph.indexer import IndexReport
+    from duckdb_code.indexer import IndexReport
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +113,7 @@ INDEX_DDL = (
 SCHEMA_VERSION = 1
 
 
-class GraphStore:
+class CodeStore:
     """A DuckDB-backed code graph.
 
     The file is always opened read-write — incremental updates are the rule for
@@ -144,7 +144,7 @@ class GraphStore:
         or ``rebuild=True``; otherwise only changed, added, and deleted files
         are reconciled by comparing stored etags against freshly computed ones,
         and the global cross-file resolution is re-run. Delegates to
-        :func:`duckdb_graph.indexer.index_folder`; the import is lazy to
+        :func:`duckdb_code.indexer.index_folder`; the import is lazy to
         avoid the store ↔ indexer import cycle.
 
         ``use_default_ignores`` (default ``True``) prunes dependency/build
@@ -152,7 +152,7 @@ class GraphStore:
         too — the ``.gitignore`` / ``.duckdbgraphignore`` rules are still honored
         either way.
         """
-        from duckdb_graph.indexer import index_folder
+        from duckdb_code.indexer import index_folder
 
         return index_folder(
             self,
@@ -173,7 +173,7 @@ class GraphStore:
         """Close the underlying connection."""
         self._con.close()
 
-    def __enter__(self) -> "GraphStore":
+    def __enter__(self) -> "CodeStore":
         return self
 
     def __exit__(self, *exc) -> None:
@@ -638,7 +638,7 @@ class GraphStore:
             head_commit=meta.get("head_commit"),
         )
 
-    def export(self) -> GraphExport:
+    def export(self) -> CodeExport:
         """Export the whole graph in the viewer's Cytoscape data contract.
 
         Performs no writes: one ordered read per table (``nodes`` then
@@ -652,7 +652,7 @@ class GraphStore:
             "start_line, end_line FROM nodes ORDER BY path, start_line, node_id"
         ).fetchall()
         nodes = [
-            GraphExportNode(
+            CodeExportNode(
                 id=row[0],
                 kind=row[1],
                 name=row[2],
@@ -669,7 +669,7 @@ class GraphStore:
             "ORDER BY src_id, dst_id, kind"
         ).fetchall()
         edges = [
-            GraphExportEdge(
+            CodeExportEdge(
                 source=row[0],
                 target=row[1],
                 kind=row[2],
@@ -677,4 +677,4 @@ class GraphStore:
             )
             for row in edge_rows
         ]
-        return GraphExport(meta=meta, nodes=nodes, edges=edges)
+        return CodeExport(meta=meta, nodes=nodes, edges=edges)

@@ -1,9 +1,9 @@
-"""Command-line interface for duckdb-graph.
+"""Command-line interface for duckdb-code.
 
 Six verbs: ``index`` a folder of source code, ``report`` on database content,
 ``impact`` the reverse-dependency set of a target, ``explain`` a target's
 structure, ``export`` the whole graph in the viewer's Cytoscape shape, and
-``mcp`` to serve the query tools over stdio. All honor the ``DUCKDB_GRAPH_*``
+``mcp`` to serve the query tools over stdio. All honor the ``DUCKDB_CODE_*``
 environment variables and the ``--db`` override. Every verb opens the store
 read-write, since incremental updates are the rule for this package.
 """
@@ -12,9 +12,9 @@ from pathlib import Path
 
 import typer
 
-from duckdb_graph import __version__
-from duckdb_graph.indexer import IndexReport, index_folder
-from duckdb_graph.store import GraphStore
+from duckdb_code import __version__
+from duckdb_code.indexer import IndexReport, index_folder
+from duckdb_code.store import CodeStore
 
 app = typer.Typer(
     help="Embeddable code-graph impact analysis over a local DuckDB database.",
@@ -26,7 +26,7 @@ app = typer.Typer(
 def _version_callback(value: bool) -> None:
     """Print the package version and exit, when ``--version`` is passed.
 
-    Eager so it fires before ``no_args_is_help`` handling: ``duckdb-graph
+    Eager so it fires before ``no_args_is_help`` handling: ``duckdb-code
     --version`` prints the version and exits 0 without requiring a subcommand.
     """
     if value:
@@ -44,7 +44,7 @@ def main(
         callback=_version_callback,
     ),
 ) -> None:
-    """duckdb-graph command-line interface."""
+    """duckdb-code command-line interface."""
 
 
 @app.command()
@@ -79,7 +79,7 @@ def index(
     ``--no-default-ignores`` to disable the built-in dir/size exclusions while
     still honoring the ignore files.
     """
-    store = GraphStore(db_path=db)
+    store = CodeStore(db_path=db)
     try:
         report = index_folder(
             store,
@@ -131,9 +131,9 @@ def watch(
     Changes under the default-ignored directories (``.git``, ``node_modules``,
     ``.venv``, caches, …) never trigger a rebuild.
     """
-    from duckdb_graph.watcher import watch as _watch
+    from duckdb_code.watcher import watch as _watch
 
-    store = GraphStore(db_path=db)
+    store = CodeStore(db_path=db)
 
     def _report(report: IndexReport) -> None:
         typer.echo(
@@ -173,7 +173,7 @@ def report(
     as_json: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
     """Report on database content."""
-    store = GraphStore(db_path=db)
+    store = CodeStore(db_path=db)
     try:
         result = store.report()
     finally:
@@ -206,7 +206,7 @@ def impact(
     as_json: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
     """Report the transitive reverse-dependency set of a target."""
-    store = GraphStore(db_path=db)
+    store = CodeStore(db_path=db)
     try:
         result = store.impact(target, depth=depth)
     finally:
@@ -232,7 +232,7 @@ def explain(
     as_json: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
     """Explain the structural neighbourhood of a target."""
-    store = GraphStore(db_path=db)
+    store = CodeStore(db_path=db)
     try:
         result = store.explain(target)
     finally:
@@ -269,7 +269,7 @@ def export(
     ),
 ) -> None:
     """Export the whole graph in the viewer's Cytoscape JSON shape."""
-    store = GraphStore(db_path=db)
+    store = CodeStore(db_path=db)
     try:
         result = store.export()
     finally:
@@ -311,7 +311,7 @@ def mcp(
     ``--transport http`` to serve Streamable HTTP, which binds loopback
     ``127.0.0.1:8000`` (path ``/mcp``) by default.
 
-    Pass ``--index <folder>`` (or set ``DUCKDB_GRAPH_ROOT``) to index that
+    Pass ``--index <folder>`` (or set ``DUCKDB_CODE_ROOT``) to index that
     folder on startup before serving: an incremental build runs — a full build
     when the database is empty, otherwise only changed files are reconciled —
     so the served graph reflects the current source. Progress goes to STDERR,
@@ -320,13 +320,13 @@ def mcp(
     skip the build and serve the database as a frozen, prebuilt index. A bare
     ``--db`` with no folder configured also serves the prebuilt index as-is.
     """
-    from duckdb_graph.config import Settings
-    from duckdb_graph.indexer import index_folder
-    from duckdb_graph.mcp_server import run_http, run_stdio
+    from duckdb_code.config import Settings
+    from duckdb_code.indexer import index_folder
+    from duckdb_code.mcp_server import run_http, run_stdio
 
     settings = Settings(db_path=db, root=index_root)
     if settings.root and not no_startup_index:
-        store = GraphStore(settings=settings)
+        store = CodeStore(settings=settings)
         try:
             report = index_folder(store, settings.root, rebuild=False)
         except Exception as exc:  # noqa: BLE001 — surface then fail fast

@@ -13,10 +13,10 @@ from pathlib import Path
 import pytest
 from starlette.applications import Starlette
 
-from duckdb_graph.config import Settings
-from duckdb_graph.indexer import index_folder
-from duckdb_graph.mcp_server import build_server
-from duckdb_graph.store import GraphStore
+from duckdb_code.config import Settings
+from duckdb_code.indexer import index_folder
+from duckdb_code.mcp_server import build_server
+from duckdb_code.store import CodeStore
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample"
 
@@ -24,7 +24,7 @@ FIXTURE = Path(__file__).parent / "fixtures" / "sample"
 @pytest.fixture
 def indexed_db(tmp_path):
     db = str(tmp_path / "mcp.duckdb")
-    writer = GraphStore(db_path=db, root=str(FIXTURE))
+    writer = CodeStore(db_path=db, root=str(FIXTURE))
     index_folder(writer, FIXTURE)
     writer.close()
     return db
@@ -133,7 +133,7 @@ def test_export_tool_inlines_a_small_graph(indexed_db):
 def test_export_tool_inline_cap_falls_back_to_path(indexed_db, monkeypatch):
     # Force the inline cap below the fixture size: inline=True must fall back to
     # a path handoff with an explanatory note, never dumping an oversized blob.
-    import duckdb_graph.mcp_server as mcp_mod
+    import duckdb_code.mcp_server as mcp_mod
 
     monkeypatch.setattr(mcp_mod, "_INLINE_ELEMENT_CAP", 1)
     payload = _result(indexed_db, "export", {"inline": True})
@@ -148,7 +148,7 @@ def test_startup_index_populates_an_empty_db(tmp_path):
     # incremental build (which full-builds when empty), then the report tool
     # sees the graph.
     db = str(tmp_path / "startup.duckdb")
-    store = GraphStore(db_path=db, root=str(FIXTURE))
+    store = CodeStore(db_path=db, root=str(FIXTURE))
     report = index_folder(store, FIXTURE, rebuild=False)
     store.close()
     assert report.nodes > 0
@@ -163,7 +163,7 @@ def test_startup_index_second_run_is_a_noop(tmp_path):
     # A second incremental build over the unchanged folder leaves the graph
     # totals identical — the startup index is idempotent.
     db = str(tmp_path / "startup.duckdb")
-    store = GraphStore(db_path=db, root=str(FIXTURE))
+    store = CodeStore(db_path=db, root=str(FIXTURE))
     first = index_folder(store, FIXTURE, rebuild=False)
     second = index_folder(store, FIXTURE, rebuild=False)
     store.close()
@@ -175,7 +175,7 @@ def test_store_opened_for_serving_still_accepts_writes(tmp_path):
     # The serving path opens the store read-write (read-only was removed), so a
     # store opened the same way the server opens it can still be written.
     db = str(tmp_path / "startup.duckdb")
-    store = GraphStore(db_path=db, root=str(FIXTURE))
+    store = CodeStore(db_path=db, root=str(FIXTURE))
     index_folder(store, FIXTURE, rebuild=False)
     # A second index on the same open store writes without any guard refusing.
     report = index_folder(store, FIXTURE, rebuild=True)

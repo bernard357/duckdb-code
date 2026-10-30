@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from duckdb_graph.extractors.markdown import MarkdownExtractor
+from duckdb_code.extractors.markdown import MarkdownExtractor
 
 FIXTURE = Path(__file__).parent / "fixtures" / "markdown"
 

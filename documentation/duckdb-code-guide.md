@@ -1,6 +1,6 @@
-# duckdb-graph user guide
+# duckdb-code user guide
 
-`duckdb-graph` turns a folder of source code or Markdown into a single DuckDB
+`duckdb-code` turns a folder of source code or Markdown into a single DuckDB
 graph and answers structural questions about it — what a change affects, how a
 symbol is connected, and what the index contains — with a local function call.
 This guide is the package overview: what the graph is, how the parsers work, the
@@ -37,7 +37,7 @@ Two parser families feed the same graph:
   `import` nodes plus the `defines` / `calls` / `inherits` / `references` /
   `imports` edges between them. Cross-file resolution is a global pass, so a
   call or import binds to the symbol it names across modules. The extractor
-  registry under `src/duckdb_graph/extractors/` is the extension point for new
+  registry under `src/duckdb_code/extractors/` is the extension point for new
   languages.
 
 - __Markdown (page/heading/tag)__ — every `.md` / `.markdown` file becomes a
@@ -77,20 +77,20 @@ heading structure, and `report` surfaces the page/heading/tag counts. See the
 
 ## The CLI {#the-cli}
 
-The `duckdb-graph` CLI exposes seven verbs: `index`, `watch`, `report`,
+The `duckdb-code` CLI exposes seven verbs: `index`, `watch`, `report`,
 `impact`, `explain`, `export`, and `mcp`. Every verb opens the store read-write
 — incremental updates are the rule for this package. All honor the
-`DUCKDB_GRAPH_*` environment variables and the `--db` override, and `--json`
+`DUCKDB_CODE_*` environment variables and the `--db` override, and `--json`
 emits machine-readable output.
 
 ```shell
-$ duckdb-graph index ./my-project --db graph.duckdb   # incremental by default
-$ duckdb-graph index ./my-project --db graph.duckdb --rebuild
-$ duckdb-graph index ./my-project --db graph.duckdb --no-default-ignores
-$ duckdb-graph watch ./my-project --db graph.duckdb   # re-index on file change
-$ duckdb-graph report --db graph.duckdb
-$ duckdb-graph impact index_folder --db graph.duckdb
-$ duckdb-graph explain GraphStore --db graph.duckdb
+$ duckdb-code index ./my-project --db code.duckdb   # incremental by default
+$ duckdb-code index ./my-project --db code.duckdb --rebuild
+$ duckdb-code index ./my-project --db code.duckdb --no-default-ignores
+$ duckdb-code watch ./my-project --db code.duckdb   # re-index on file change
+$ duckdb-code report --db code.duckdb
+$ duckdb-code impact index_folder --db code.duckdb
+$ duckdb-code explain CodeStore --db code.duckdb
 ```
 
 `watch` runs until interrupted, re-indexing incrementally on every relevant
@@ -113,7 +113,7 @@ and size exclusions while still honoring the ignore files.
 
 ## The MCP server {#the-mcp-server}
 
-`duckdb-graph mcp` serves four tools to any MCP client — `impact`, `explain`,
+`duckdb-code mcp` serves four tools to any MCP client — `impact`, `explain`,
 `report`, and `export` — with the same JSON-object shapes as the SDK.
 `export` returns the whole graph as JSON: by default it writes the
 `{meta, nodes, edges}` document to a file (given `out`, or a temp path) and
@@ -124,12 +124,12 @@ graph (at or under an element cap); above the cap it falls back to the path
 handoff. It serves over two transports:
 
 ```shell
-$ duckdb-graph mcp                                   # stdio (default)
-$ duckdb-graph mcp --transport http                  # http on 127.0.0.1:8000/mcp
-$ duckdb-graph mcp --transport http --host 127.0.0.1 --port 8000
+$ duckdb-code mcp                                   # stdio (default)
+$ duckdb-code mcp --transport http                  # http on 127.0.0.1:8000/mcp
+$ duckdb-code mcp --transport http --host 127.0.0.1 --port 8000
 ```
 
-Over __stdio__, an MCP client spawns `duckdb-graph mcp` as a child process in
+Over __stdio__, an MCP client spawns `duckdb-code mcp` as a child process in
 the same container and talks to it over stdin/stdout; stdio is a same-container
 transport, not a network protocol. Over __Streamable HTTP__ (`--transport
 http`), the server binds loopback `127.0.0.1:8000` at path `/mcp` by default;
@@ -139,14 +139,14 @@ Pass `--index <folder>` to index that folder on startup before serving — give
 the MCP server the source folder, not just a prebuilt database:
 
 ```shell
-$ duckdb-graph mcp --db graph.duckdb --index ./my-project   # index then serve
-$ duckdb-graph mcp --db graph.duckdb --index ./my-project --no-startup-index
-$ duckdb-graph mcp --db graph.duckdb                        # serve as-is
+$ duckdb-code mcp --db code.duckdb --index ./my-project   # index then serve
+$ duckdb-code mcp --db code.duckdb --index ./my-project --no-startup-index
+$ duckdb-code mcp --db code.duckdb                        # serve as-is
 ```
 
 The startup build is incremental — a full build when the database is empty,
 otherwise only changed files are reconciled — so the served graph reflects the
-current source without a separate `index` run. `DUCKDB_GRAPH_ROOT` sets the
+current source without a separate `index` run. `DUCKDB_CODE_ROOT` sets the
 same folder. Progress goes to stderr, since stdout carries the MCP stdio
 protocol, and a failed build aborts startup rather than serving a partial
 graph. Pass `--no-startup-index` to skip the build and serve the database as a
@@ -160,8 +160,8 @@ index fresh during a long session.
 consumes. Index a folder, export the graph, then open the viewer:
 
 ```shell
-$ duckdb-graph index tests/fixtures/markdown --db graph.duckdb
-$ duckdb-graph export --db graph.duckdb --out examples/graph-viewer/graph.json
+$ duckdb-code index tests/fixtures/markdown --db code.duckdb
+$ duckdb-code export --db code.duckdb --out examples/graph-viewer/graph.json
 ```
 
 The viewer under `examples/graph-viewer/` turns that export into an interactive
@@ -171,7 +171,7 @@ are in the [graph viewer guide](graph-viewer-guide.md).
 
 ## Semantic search is the sibling {#semantic-search-is-the-sibling}
 
-`duckdb-graph` answers structural, link-based questions only. For "what text is
+`duckdb-code` answers structural, link-based questions only. For "what text is
 semantically near this query" — hybrid vector + exact-token search over a local
 DuckDB file — use the sibling
 [`duckdb-vectors`](https://github.com/bernard357/duckdb-vectors) package. The two

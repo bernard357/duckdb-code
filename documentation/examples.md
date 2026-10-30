@@ -1,7 +1,7 @@
 # Examples
 
-These examples show `duckdb-graph` answering real questions about real inputs —
-the package's own `src/duckdb_graph/` source tree for the code graph, and the
+These examples show `duckdb-code` answering real questions about real inputs —
+the package's own `src/duckdb_code/` source tree for the code graph, and the
 committed `tests/fixtures/markdown` corpus for the Markdown knowledge graph.
 Every example is one of the requests run by `make self-test` (see
 `scripts/self_test.py`), and the observed results below are captured verbatim
@@ -11,7 +11,7 @@ answer for both parsers.
 Each example first builds the graph once, then queries it:
 
 ```shell
-$ duckdb-graph index src/duckdb_graph --db graph.duckdb
+$ duckdb-code index src/duckdb_code --db code.duckdb
 ```
 
 The self-test indexes into a throwaway database and composes the public
@@ -37,10 +37,10 @@ does it look complete?" before trusting any deeper query.
 __How the tool is used.__ The `report` tool introspects the index.
 
 ```shell
-$ duckdb-graph report --db graph.duckdb
+$ duckdb-code report --db code.duckdb
 ```
 
-In Python this is `GraphStore(db_path=...).report()`, returning a `Report`
+In Python this is `CodeStore(db_path=...).report()`, returning a `Report`
 with `languages`, `files_by_language`, `nodes_by_kind`, `edges_by_kind`, and
 `roots`.
 
@@ -135,7 +135,7 @@ a target, so a change can be scoped before it is made.
 __How the tool is used.__ The `impact` tool returns the reverse-dependency set.
 
 ```shell
-$ duckdb-graph impact index_folder --db graph.duckdb
+$ duckdb-code impact index_folder --db code.duckdb
 ```
 
 In Python, `store.impact("index_folder")` returns an `ImpactResult` whose
@@ -151,11 +151,11 @@ affected files (2):
 affected symbols (3):
   d=1 module cli
   d=1 module store
-  d=1 function store.GraphStore.index
+  d=1 function store.CodeStore.index
 ```
 
 Changing `index_folder` reaches two files through three direct (distance 1)
-dependents: the `store` and `cli` modules, and `GraphStore.index` — which
+dependents: the `store` and `cli` modules, and `CodeStore.index` — which
 is exactly the method that delegates to `index_folder`. A reviewer changing that
 function knows up front which files to re-check.
 
@@ -169,24 +169,24 @@ the context of the whole codebase", spanning modules.
 __How the tool is used.__ The `explain` tool returns that neighbourhood.
 
 ```shell
-$ duckdb-graph explain GraphStore --db graph.duckdb
+$ duckdb-code explain CodeStore --db code.duckdb
 ```
 
-In Python, `store.explain("GraphStore")` returns an `ExplanationResult`; the
+In Python, `store.explain("CodeStore")` returns an `ExplanationResult`; the
 self-test prefers the `class`-kind resolution so the context is the class
 definition rather than a same-named re-export.
 
 __Observed results.__
 
 ```text
-node    : store.GraphStore (store.py)
+node    : store.CodeStore (store.py)
 defines : 23
 fan_in  : 2  fan_out: 0
   used by : cli (cli.py)
   used by : mcp_server.build_server (mcp_server.py)
 ```
 
-`GraphStore` is defined in `store.py`, exposes 23 members, and is used from
+`CodeStore` is defined in `store.py`, exposes 23 members, and is used from
 two other modules — the CLI and the MCP server's `build_server`. The fan-in
 crossing module boundaries is the cross-module context: it shows the class's
 real consumers without reading every file by hand.
@@ -219,7 +219,7 @@ __Observed results.__
  10  import    extractors.base::import:pydantic.BaseModel
  10  import    indexer::import:pydantic.BaseModel
  10  import    models::import:pydantic.BaseModel
-  7  import    ::import:duckdb_graph.models.Node
+  7  import    ::import:duckdb_code.models.Node
 ```
 
 The most-depended-upon targets are `pydantic.BaseModel` (pulled into every
@@ -242,7 +242,7 @@ __How the tool is used.__ Index the Markdown folder once, then run the same
 `report`, `impact`, and `explain` verbs:
 
 ```shell
-$ duckdb-graph index tests/fixtures/markdown --db kg.duckdb
+$ duckdb-code index tests/fixtures/markdown --db kg.duckdb
 ```
 
 Every `.md` / `.markdown` file becomes a `page` node with `heading` and `tag`
@@ -256,7 +256,7 @@ __Observed results — corpus counts.__ `report` surfaces the page, heading, and
 tag nodes and the link edges:
 
 ```shell
-$ duckdb-graph report --db kg.duckdb
+$ duckdb-code report --db kg.duckdb
 ```
 
 ```text
@@ -280,7 +280,7 @@ __Observed results — what links here.__ `impact` on a page returns the pages
 that link to it:
 
 ```shell
-$ duckdb-graph impact index.md --db kg.duckdb
+$ duckdb-code impact index.md --db kg.duckdb
 ```
 
 ```text
@@ -297,7 +297,7 @@ nodes: `orphan.md` links out to the index but nothing links back to it, so it is
 an orphan page.
 
 ```shell
-$ duckdb-graph impact orphan.md --db kg.duckdb
+$ duckdb-code impact orphan.md --db kg.duckdb
 ```
 
 ```text
@@ -310,7 +310,7 @@ its outbound links (fan-out), inbound links (fan-in), and heading structure
 (`defines`):
 
 ```shell
-$ duckdb-graph explain index.md --db kg.duckdb
+$ duckdb-code explain index.md --db kg.duckdb
 ```
 
 ```text
@@ -333,4 +333,4 @@ that `explain` gives a code symbol, applied to prose.
 
 Code and Markdown stay in separate domains in one database: a Markdown link
 never binds to a code symbol and a code edge never binds to a page, so indexing
-`src/duckdb_graph` into its own database is unaffected by the Markdown corpus.
+`src/duckdb_code` into its own database is unaffected by the Markdown corpus.

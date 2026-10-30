@@ -1,6 +1,6 @@
-# Contributing to duckdb-graph
+# Contributing to duckdb-code
 
-Thanks for considering a contribution. `duckdb-graph` grows through small,
+Thanks for considering a contribution. `duckdb-code` grows through small,
 focused improvements, and new contributors are genuinely welcome — whether you
 fix a typo, add a language extractor, or sharpen the docs.
 
@@ -11,7 +11,7 @@ the detailed conventions — lives in the
 
 ## Does your change fit?
 
-`duckdb-graph` is intentionally small, and the best contributions keep it that
+`duckdb-code` is intentionally small, and the best contributions keep it that
 way: one clear thing, done well, with a test and a line of docs. A change fits
 when it respects the project's shape:
 
@@ -29,7 +29,7 @@ when it respects the project's shape:
 
 You do not need to understand the whole codebase to help:
 
-- __Add an extractor__ — the registry under `src/duckdb_graph/extractors/` is
+- __Add an extractor__ — the registry under `src/duckdb_code/extractors/` is
   the main extension point for a new language.
 - __Improve the docs__ — clarify a page or add a worked example.
 - __Report a rough edge__ — a clear issue with a minimal reproduction.

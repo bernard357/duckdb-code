@@ -3,7 +3,7 @@ requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
-name = "duckdb-graph"
+name = "duckdb-code"
 dynamic = ["version"]
 description = "Frugal, embeddable graph building block for agentic systems — tree-sitter code impact analysis and structure explanation over a local DuckDB file, no external service."
 readme = "README.md"
@@ -50,14 +50,14 @@ dependencies = [
 dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11"]
 
 [project.scripts]
-duckdb-graph = "duckdb_graph.cli:app"
+duckdb-code = "duckdb_code.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/bernard357/duckdb-graph"
-Repository = "https://github.com/bernard357/duckdb-graph"
-Documentation = "https://bernard357.github.io/duckdb-graph/"
-Issues = "https://github.com/bernard357/duckdb-graph/issues"
-Changelog = "https://github.com/bernard357/duckdb-graph/blob/main/CHANGES.md"
+Homepage = "https://github.com/bernard357/duckdb-code"
+Repository = "https://github.com/bernard357/duckdb-code"
+Documentation = "https://bernard357.github.io/duckdb-code/"
+Issues = "https://github.com/bernard357/duckdb-code/issues"
+Changelog = "https://github.com/bernard357/duckdb-code/blob/main/CHANGES.md"
 
 # Version is derived from the latest git tag (e.g. a v0.1.0 tag yields 0.1.0).
 # Between tags, hatch-vcs appends a dev/commit suffix. There is no version
@@ -66,7 +66,7 @@ Changelog = "https://github.com/bernard357/duckdb-graph/blob/main/CHANGES.md"
 source = "vcs"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/duckdb_graph"]
+packages = ["src/duckdb_code"]
 
 [tool.ruff]
 line-length = 88
@@ -81,7 +81,7 @@ markers = ["slow: tests that take more than 200ms"]
 
 [tool.mypy]
 python_version = "3.12"
-files = ["src/duckdb_graph", "scripts"]
+files = ["src/duckdb_code", "scripts"]
 warn_unused_ignores = true
 
 # Core parsing and server dependencies ship no type stubs; their imports are
