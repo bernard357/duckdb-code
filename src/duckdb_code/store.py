@@ -99,6 +99,12 @@ SCHEMA_DDL = (
         value TEXT NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS vectors (
+        node_id   TEXT NOT NULL,
+        embedding DOUBLE[] NOT NULL
+    )
+    """,
 )
 
 # Read-write-only indexes. No ``idx_files_path`` — the ``files.path`` primary
@@ -112,11 +118,13 @@ INDEX_DDL = (
     "CREATE INDEX IF NOT EXISTS idx_edges_path ON edges (path)",
 )
 
-# Schema version 2 adds ``edges.confidence`` (numeric per-edge resolution
+# Schema version 2 added ``edges.confidence`` (numeric per-edge resolution
 # confidence, the source of truth from which the ``resolution`` flag is
-# derived) and ``nodes.centrality`` (index-time PageRank-style rank). A store
-# opened against an older file recreates the schema on the next full index.
-SCHEMA_VERSION = 2
+# derived) and ``nodes.centrality`` (index-time PageRank-style rank). Version 3
+# adds the ``vectors`` table (one per-symbol embedding, keyed by ``node_id``)
+# backing semantic search. A store opened against an older file recreates the
+# schema on the next full index.
+SCHEMA_VERSION = 3
 
 
 class CodeStore:
@@ -130,9 +138,12 @@ class CodeStore:
         self,
         db_path: str | None = None,
         root: str | None = None,
+        embedder: str | None = None,
         settings: Settings | None = None,
     ) -> None:
-        self.settings = settings or Settings(db_path=db_path, root=root)
+        self.settings = settings or Settings(
+            db_path=db_path, root=root, embedder=embedder
+        )
         self._con = duckdb.connect(self.settings.db_path)
         self._ensure_schema()
 

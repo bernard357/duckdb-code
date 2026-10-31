@@ -112,14 +112,12 @@ contract that keeps the schema and the tools in lock-step. The core node/edge
 kinds already present stay as the backbone; the additions are strictly
 additive.
 
-__Build status.__ Shipped at schema version 2: the `edges.confidence` column
+__Build status.__ Shipped at schema version 3: the `edges.confidence` column
 (with `resolution` derived from it), the `nodes.centrality` column, `member_of`
-community edges, and `tests` edges — all produced by the deferred-index
-pipeline and its enrichment / post-index analytics phases. The `tests` edges
-are derived from the resolved graph in the enrichment phase: a test-file symbol
-(by naming or a test directory) links to each non-test symbol it reaches. Still
-staged, each landing with the tool it serves: the `vectors` table, and the
-cross-boundary `route` / git co-change edge kinds.
+community edges, `tests` edges, and the `vectors` table — all produced by the
+deferred-index pipeline and its enrichment / post-index phases. Still staged,
+each landing with the tool it serves: the cross-boundary `route` edges and the
+git co-change edges.
 
 ## Semantic search: vector storage {#vectors}
 
@@ -139,11 +137,18 @@ Two options, both viable for a frugal single-file design:
   index and have `search` / `find_similar` compose the two files. Avoids
   re-implementing embedding storage, at the cost of a second artifact.
 
-Preferred direction: the in-DuckDB `vectors` table, to preserve the single-file
-promise, falling back to the companion if embedding maintenance proves heavier
-than the graph build. Either way the decision is recorded here so the two
-semantic tools have a concrete data source; the embedding model itself is an
-implementation detail of the tool work, not of this schema.
+__Decision (shipped).__ The in-DuckDB `vectors` table, to preserve the
+single-file promise — one embedding per searchable symbol, keyed by `node_id`,
+populated in the post-index phase. The embedding backend is pluggable
+(`duckdb_code.embedders`, mirroring the sibling `duckdb-vectors`): the
+production default is `fastembed` (local ONNX, a core dependency, real semantic
+vectors), with a dependency-free `hashing` backend reserved for tests and
+offline use — it produces stable, normalized but lexical vectors, never a
+production choice. The backend is selected by `DUCKDB_CODE_EMBEDDER` (or the
+`embedder` setting), and its id and dimensions are stored in `meta` so a
+backend change is detectable. The embedded text is the symbol's kind plus its
+identifier with dotted names split into tokens (relationships, not source lines
+— so search is intent-over-identifiers).
 
 ## Incremental re-index {#incremental}
 

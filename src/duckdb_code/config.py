@@ -10,6 +10,9 @@ from pydantic import BaseModel
 
 ENV_PREFIX = "DUCKDB_CODE_"
 DEFAULT_DB_PATH = "code.duckdb"
+# Production default: fastembed (local ONNX, a core dependency). Tests and
+# offline runs override via ``DUCKDB_CODE_EMBEDDER=hashing`` or the argument.
+DEFAULT_EMBEDDER = "fastembed"
 
 
 def _env(name: str) -> str | None:
@@ -26,14 +29,17 @@ class Settings(BaseModel):
 
     db_path: str
     root: str | None = None
+    embedder: str = DEFAULT_EMBEDDER
 
     def __init__(
         self,
         db_path: str | None = None,
         root: str | None = None,
+        embedder: str | None = None,
     ) -> None:
         resolved_db = db_path or _env("DB_PATH") or DEFAULT_DB_PATH
         super().__init__(
             db_path=resolved_db,
             root=root or _env("ROOT"),
+            embedder=embedder or _env("EMBEDDER") or DEFAULT_EMBEDDER,
         )

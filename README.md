@@ -291,7 +291,8 @@ duckdb-code/
 │   ├── config.py           # Settings / DUCKDB_CODE_* env
 │   ├── models.py           # Node / Edge / ImpactResult pydantic models
 │   ├── etag.py             # compute_etag content fingerprint
-│   └── extractors/         # pluggable extractors (python, javascript/typescript, markdown)
+│   ├── extractors/         # pluggable extractors (python, javascript/typescript, markdown)
+│   └── embedders/          # pluggable embedders (fastembed default, hashing fallback)
 ├── tests/                  # pytest suite
 ├── pyproject.toml          # metadata, deps, tag-driven version (hatch-vcs)
 └── Makefile                # the task toolbox

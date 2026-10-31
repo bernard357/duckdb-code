@@ -8,6 +8,14 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
 
 ### Added
 
+- __Semantic embeddings and the `vectors` table (schema v3).__ A full index now
+  embeds each searchable symbol (modules, classes, functions, pages, headings)
+  and stores one vector per node in a `vectors` table keyed by `node_id`,
+  backing the forthcoming `search` and `find_similar` tools. Embedding backends
+  are pluggable (`duckdb_code.embedders`): the production default is `fastembed`
+  (local ONNX, now a core dependency), with a dependency-free `hashing` backend
+  for tests and offline use, selected via `DUCKDB_CODE_EMBEDDER` or the
+  `embedder` setting. The backend id and dimensions are recorded in `meta`.
 - __Index-time graph analytics (schema v2).__ A full index now computes and
   stores a PageRank-style `centrality` per node and weakly-connected-component
   `member_of` community edges in a post-index phase, over the dependency edge

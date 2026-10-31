@@ -31,7 +31,7 @@ Invoke venv binaries directly (`.venv/bin/python`, `.venv/bin/pytest`, `.venv/bi
 
 ### Repository layout
 
-The package lives in `src/duckdb_code/`: `store.py` (the `CodeStore` API), `indexer.py` (folder → graph), `cli.py` (the CLI, incl. the `index`, `watch`, and `mcp` verbs), `watcher.py` (the `watch` loop), `mcp_server.py` (the MCP server), `config.py` (`Settings` / `DUCKDB_CODE_*`), `models.py` (pydantic models), `etag.py` (`compute_etag`), and `extractors/` (python, javascript/typescript, markdown). Tests are in `tests/`. See [Project structure](https://github.com/bernard357/duckdb-code/blob/main/README.md#project-structure) for the annotated tree.
+The package lives in `src/duckdb_code/`: `store.py` (the `CodeStore` API), `indexer.py` (folder → graph), `cli.py` (the CLI, incl. the `index`, `watch`, and `mcp` verbs), `watcher.py` (the `watch` loop), `mcp_server.py` (the MCP server), `config.py` (`Settings` / `DUCKDB_CODE_*`), `models.py` (pydantic models), `etag.py` (`compute_etag`), `extractors/` (python, javascript/typescript, markdown), and `embedders/` (fastembed default, hashing fallback). Tests are in `tests/`. See [Project structure](https://github.com/bernard357/duckdb-code/blob/main/README.md#project-structure) for the annotated tree.
 
 ### Conventions
 

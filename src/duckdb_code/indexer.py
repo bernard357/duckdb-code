@@ -24,6 +24,7 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     import pathspec
 
+from duckdb_code.embedders import resolve_embedder
 from duckdb_code.etag import compute_etag
 from duckdb_code.extractors.base import Extraction
 from duckdb_code.extractors.markdown import _slug
@@ -1017,7 +1018,7 @@ def _recreate_tables(store: CodeStore) -> None:
     ``_ensure_schema`` agree.
     """
     con = store._con
-    for table in ("edges", "nodes", "files", "meta"):
+    for table in ("edges", "nodes", "files", "meta", "vectors"):
         con.execute(f"DROP TABLE IF EXISTS {table}")
     for ddl in SCHEMA_DDL:
         con.execute(ddl)
@@ -1051,6 +1052,7 @@ def _finalize(store: CodeStore) -> None:
     _create_indexes(store)
     _compute_centrality(store)
     _compute_communities(store)
+    _compute_embeddings(store)
 
 
 def _analytics_adjacency(store: CodeStore) -> tuple[list[str], dict[str, list[str]]]:
@@ -1142,6 +1144,65 @@ def _compute_communities(store: CodeStore) -> None:
         "INSERT INTO edges (src_id, dst_id, kind, path, resolution, confidence) "
         "VALUES (?, ?, 'member_of', '', 'exact', ?)",
         [(nid, find(nid), CONFIDENCE_EXACT) for nid in node_ids],
+    )
+
+
+# Node kinds that carry a searchable identifier — the symbols `search` and
+# `find_similar` match against. File/import/structural nodes are not embedded.
+_EMBEDDABLE_KINDS = ("module", "class", "function", "page", "heading")
+
+
+def _embedding_text(kind: str, name: str, qualified_name: str) -> str:
+    """The text embedded for a symbol: its kind and identifier, de-dotted.
+
+    Dotted qualified names are split into words so the embedder sees the path
+    segments as tokens (``payments.charge.Charge`` -> ``payments charge
+    Charge``), which an identifier-level model matches on far better than one
+    opaque dotted string.
+    """
+    words = qualified_name.replace(".", " ").replace("::", " ").replace("/", " ")
+    return f"{kind} {name} {words}".strip()
+
+
+def _compute_embeddings(store: CodeStore) -> None:
+    """Embed each searchable symbol and store one vector per node.
+
+    The embedder is resolved from ``settings.embedder`` (``fastembed`` in
+    production, ``hashing`` in tests/offline). The embedded text is the symbol's
+    kind + identifier (see :func:`_embedding_text`) — the graph stores
+    relationships, not source lines, so search is intent-over-identifiers. The
+    backend id and dimensions are recorded in ``meta`` so a backend change is
+    detectable. A resolver/import failure is logged and skipped rather than
+    failing the whole index, so an index still builds without the embedding
+    extra available.
+    """
+    con = store._con
+    placeholders = ", ".join(["?"] * len(_EMBEDDABLE_KINDS))
+    rows = con.execute(
+        f"SELECT node_id, kind, name, qualified_name FROM nodes "
+        f"WHERE kind IN ({placeholders})",
+        list(_EMBEDDABLE_KINDS),
+    ).fetchall()
+    if not rows:
+        return
+    try:
+        embedder = resolve_embedder(store.settings.embedder)
+        texts = [_embedding_text(kind, name, qn) for _nid, kind, name, qn in rows]
+        vectors = embedder.embed(texts)
+    except Exception as exc:  # noqa: BLE001 — degrade, never fail the index
+        logger.warning("skipping embeddings (%s): %s", store.settings.embedder, exc)
+        return
+    con.executemany(
+        "INSERT INTO vectors (node_id, embedding) VALUES (?, ?)",
+        [(row[0], vector) for row, vector in zip(rows, vectors, strict=True)],
+    )
+    con.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+        ["embedder", embedder.model_identifier],
+    )
+    con.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+        ["embedding_dimensions", str(embedder.dimensions)],
     )
 
 
