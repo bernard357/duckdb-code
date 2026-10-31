@@ -1,9 +1,9 @@
 """MCP-over-stdio server exposing duckdb-code query tools.
 
 Any MCP client (Docker Agent, Claude Desktop, Claude Code, Cursor) can spawn
-``duckdb-code mcp`` as a subprocess and call the seven tools ``search``,
-``find_similar``, ``overview``, ``impact``, ``explain``, ``report``, and
-``export``. The server also advertises a
+``duckdb-code mcp`` as a subprocess and call the eight tools ``search``,
+``find_similar``, ``overview``, ``related_tests``, ``impact``, ``explain``,
+``report``, and ``export``. The server also advertises a
 ``description`` and ``instructions`` so a client can route to it and pick a
 tool by intent. The server is built on the official ``mcp`` SDK.
 
@@ -81,6 +81,8 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             "(house patterns, duplication).\n"
             "- `overview` — orient in the codebase: its modules, entry points, "
             "and most central symbols, sized to a budget.\n"
+            "- `related_tests` — the tests to run after editing a symbol or "
+            "file.\n"
             "- `explain` — review the structure around a given symbol or file "
             "(what it defines, what it depends on, what depends on it).\n"
             "- `impact` — evaluate the implications of a change by finding "
@@ -191,6 +193,37 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         store = CodeStore(settings=resolved)
         try:
             return store.overview(budget=budget).model_dump()
+        finally:
+            store.close()
+
+    @_described(server)
+    def related_tests(target: str) -> dict:
+        """Use this to find the tests to run after editing a symbol or file.
+
+        Returns the test symbols that exercise the target — derived at index
+        time from a test file calling, referencing, or importing it — so an
+        agent runs the right tests after a change instead of the whole suite or
+        none.
+
+        Arguments:
+        - target: a dotted qualified name (e.g. ``pkg.module.Symbol``) or a file
+          path, resolved the same way as `impact`/`explain`.
+
+        Returns one JSON object with:
+        - symbol: the target string, echoed back.
+        - resolved: the node(s) the target matched (empty when nothing matched).
+        - tests: the distinct test symbols reaching the target, each
+          {node, reason} where ``reason`` names why it is related (``reaches``
+          — the test calls/references/imports the symbol). ``node`` carries
+          node_id, kind, name, qualified_name, path, start_line, end_line,
+          language.
+
+        Returns empty ``resolved``/``tests`` when the target matches nothing or
+        no test reaches it (including an index built from source without tests).
+        """
+        store = CodeStore(settings=resolved)
+        try:
+            return store.related_tests(target).model_dump()
         finally:
             store.close()
 

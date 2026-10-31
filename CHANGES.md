@@ -8,6 +8,11 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
 
 ### Added
 
+- __`related_tests` tool and CLI verb.__ Returns the tests to run after editing
+  a symbol or file — the test symbols that reach it via the `tests` edges,
+  resolved the same way as `impact`/`explain`. Exposed as
+  `CodeStore.related_tests(target)`, the `related_tests` MCP tool, and
+  `duckdb-code related-tests <target>`.
 - __`overview` tool and CLI verb.__ The repo map an agent reads to orient
   before touching anything: the indexed modules (most symbol-rich first), the
   entry points (symbols nothing depends on — dependency-graph roots), and the

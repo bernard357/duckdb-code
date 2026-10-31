@@ -33,6 +33,8 @@ from duckdb_code.models import (
     Node,
     Overview,
     RankedSymbol,
+    RelatedTest,
+    RelatedTestsResult,
     Report,
     SearchHit,
     SearchResult,
@@ -504,6 +506,28 @@ class CodeStore:
             ids,
         ).fetchall()
         return [self._row_to_node(row) for row in rows]
+
+    def related_tests(self, target: str) -> RelatedTestsResult:
+        """Return the tests to run after editing ``target`` — a symbol or path.
+
+        Resolves ``target`` the same way as ``impact``/``explain`` (exact
+        qualified name, then path, then best-effort suffix), then returns the
+        distinct test symbols that reach any resolved node via a ``tests`` edge
+        (derived at index time from a test file calling, referencing, or
+        importing the symbol). Ordered by path then line. Returns empty
+        ``resolved``/``tests`` when the target matches nothing or no test
+        reaches it — never raising.
+        """
+        target = target.strip()
+        if not target:
+            return RelatedTestsResult(symbol=target, resolved=[], tests=[])
+        resolved, _ambiguous, _origin = self._resolve_target(target)
+        if not resolved:
+            return RelatedTestsResult(symbol=target, resolved=[], tests=[])
+        seed_ids = {node.node_id for node in resolved}
+        tests = [RelatedTest(node=node) for node in self._tests_reaching(seed_ids)]
+        resolved_sorted = sorted(resolved, key=self._order_key)
+        return RelatedTestsResult(symbol=target, resolved=resolved_sorted, tests=tests)
 
     def _reverse_defines(self, dst_ids: set[str]) -> list[Node]:
         """Return the nodes that ``defines``-point at any id in ``dst_ids``."""

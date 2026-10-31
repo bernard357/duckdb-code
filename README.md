@@ -207,7 +207,7 @@ query", use the sibling
 
 ## MCP tool
 
-`duckdb-code mcp` is an MCP-over-stdio server exposing seven query tools:
+`duckdb-code mcp` is an MCP-over-stdio server exposing eight query tools:
 
 - `search(query, limit=…)` — ranked semantic search for symbols by intent, when
   you don't know the name.
@@ -215,6 +215,7 @@ query", use the sibling
   (house patterns, duplication).
 - `overview(budget=…)` — repo map: modules, entry points, and most central
   symbols, sized to a token budget.
+- `related_tests(target)` — the tests to run after editing a symbol or file.
 - `impact(target, …)` — transitive reverse-dependency set for a symbol or file.
 - `explain(target, …)` — structural neighbourhood of a symbol or file.
 - `report()` — introspects the index: database path, schema version, languages,

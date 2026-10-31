@@ -279,3 +279,31 @@ class Overview(BaseModel):
     entry_points: list[Node]
     central_symbols: list[RankedSymbol]
     budget: int
+
+
+class RelatedTest(BaseModel):
+    """One test in a :class:`RelatedTestsResult`.
+
+    ``node`` is the test symbol; ``reason`` names why it is related — the kind
+    of ``tests`` edge binding it to the target (currently always
+    ``"reaches"``, i.e. the test calls/references/imports the symbol), left as a
+    field so richer reasons (e.g. naming-convention matches) can be added
+    without changing the shape.
+    """
+
+    node: Node
+    reason: str = "reaches"
+
+
+class RelatedTestsResult(BaseModel):
+    """The result of a ``related_tests`` query: the tests to run after an edit.
+
+    ``symbol`` is the query string, echoed back. ``resolved`` is the node(s) it
+    matched; ``tests`` is the distinct set of test symbols that exercise any
+    resolved node, ordered by path then line. Empty when the target resolves to
+    nothing or no test reaches it.
+    """
+
+    symbol: str
+    resolved: list[Node]
+    tests: list[RelatedTest]

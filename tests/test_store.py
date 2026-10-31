@@ -480,3 +480,53 @@ def test_impact_aggregates_by_module_and_entry_points(tmp_path):
     # The sample fixture has no test files, so related_tests is empty.
     assert result.related_tests == []
     store.close()
+
+
+def test_related_tests_empty_on_source_only_fixture(tmp_path):
+    # The sample fixture has no test files, so no symbol has related tests,
+    # but resolution still works (resolved is populated, tests empty).
+    store = _indexed(tmp_path)
+    result = store.related_tests("payments.charge.Charge")
+    assert result.symbol == "payments.charge.Charge"
+    assert result.resolved  # the symbol resolves
+    assert result.tests == []  # nothing tests it in this fixture
+    # An unresolved target returns empty resolved and tests.
+    empty = store.related_tests("does.not.exist")
+    assert empty.resolved == []
+    assert empty.tests == []
+    assert store.related_tests("").tests == []
+    store.close()
+
+
+def test_related_tests_finds_reaching_tests(tmp_path):
+    # Build a tiny tree with a test file reaching a source symbol, so a `tests`
+    # edge exists and related_tests surfaces it.
+    import textwrap
+
+    tree = tmp_path / "proj"
+    (tree / "src").mkdir(parents=True)
+    (tree / "tests").mkdir()
+    (tree / "src" / "money.py").write_text(
+        textwrap.dedent("""
+        def charge(amount):
+            return amount
+        """),
+        encoding="utf-8",
+    )
+    (tree / "tests" / "test_money.py").write_text(
+        textwrap.dedent("""
+        from src.money import charge
+
+        def test_charge():
+            assert charge(10) == 10
+        """),
+        encoding="utf-8",
+    )
+    store = CodeStore(db_path=str(tmp_path / "proj.duckdb"), root=str(tree))
+    index_folder(store, tree)
+    result = store.related_tests("src.money.charge")
+    assert result.resolved
+    test_paths = {t.node.path for t in result.tests}
+    assert any("test_money" in p for p in test_paths)
+    assert all(t.reason == "reaches" for t in result.tests)
+    store.close()

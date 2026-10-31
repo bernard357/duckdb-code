@@ -314,6 +314,27 @@ def overview(
 
 
 @app.command()
+def related_tests(
+    target: str = typer.Argument(..., help="Symbol or file path."),
+    db: str | None = typer.Option(None, "--db", help="DuckDB file path."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON."),
+) -> None:
+    """List the tests to run after editing a symbol or file."""
+    store = CodeStore(db_path=db)
+    try:
+        result = store.related_tests(target)
+    finally:
+        store.close()
+    if as_json:
+        typer.echo(result.model_dump_json())
+    else:
+        typer.echo(f"Resolved : {len(result.resolved)} node(s)")
+        typer.echo(f"Tests    : {len(result.tests)}")
+        for test in result.tests:
+            typer.echo(f"  {test.reason}  {test.node.qualified_name}  {test.node.path}")
+
+
+@app.command()
 def explain(
     target: str = typer.Argument(..., help="Symbol or file path."),
     db: str | None = typer.Option(None, "--db", help="DuckDB file path."),
