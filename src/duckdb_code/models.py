@@ -9,7 +9,17 @@ at extraction time.
 
 from pydantic import BaseModel
 
-NODE_KINDS = ("file", "module", "class", "function", "import", "page", "heading", "tag")
+NODE_KINDS = (
+    "file",
+    "module",
+    "class",
+    "function",
+    "import",
+    "page",
+    "heading",
+    "tag",
+    "route",
+)
 EDGE_KINDS = (
     "defines",
     "imports",
@@ -22,6 +32,7 @@ EDGE_KINDS = (
     "member_of",
     "tests",
     "file_changes_with",
+    "calls_route",
 )
 RESOLUTIONS = ("exact", "best_effort")
 

@@ -264,6 +264,40 @@ def resolve_edges(nodes: list[Node], edges: list[Edge]) -> list[Edge]:
     # nodes only, source must be a markdown node), mirroring the link pass.
     resolved.extend(_resolve_markdown_tags(nodes, edges, node_by_id))
 
+    # Route pass: bind each client `calls_route` edge to the server `route` node
+    # with the same "METHOD /path" qualified name — the cross-boundary HTTP
+    # link. A client call matching no server route is dropped (never fabricated).
+    resolved.extend(_resolve_route_edges(nodes, edges))
+
+    return resolved
+
+
+def _resolve_route_edges(nodes: list[Node], edges: list[Edge]) -> list[Edge]:
+    """Bind ``calls_route`` edges to their ``route`` node by METHOD+path.
+
+    A ``route`` node's ``qualified_name`` is ``"METHOD /path"``; a client
+    ``calls_route`` edge's raw target is the same string. Exact match binds the
+    edge ``exact`` (confidence 1.0) on a single route, ``best_effort`` when more
+    than one route shares the signature (e.g. the same path served in two
+    files). Zero matches drops the edge, so an unmatched client call — a route
+    served by an un-indexed backend — is never fabricated.
+    """
+    routes_by_sig: dict[str, list[str]] = {}
+    for node in nodes:
+        if node.kind == "route":
+            routes_by_sig.setdefault(node.qualified_name, []).append(node.node_id)
+    if not routes_by_sig:
+        return []
+    resolved: list[Edge] = []
+    for edge in edges:
+        if edge.kind != "calls_route" or not _is_unresolved(edge):
+            continue
+        hits = routes_by_sig.get(_raw_target(edge.dst_id))
+        if not hits:
+            continue
+        confidence = CONFIDENCE_EXACT if len(hits) == 1 else CONFIDENCE_SUFFIX
+        for dst_id in hits:
+            resolved.append(_bind(edge, dst_id, confidence))
     return resolved
 
 

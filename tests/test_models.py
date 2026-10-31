@@ -39,6 +39,7 @@ def test_kind_constants():
         "page",
         "heading",
         "tag",
+        "route",
     )
     assert EDGE_KINDS == (
         "defines",
@@ -52,6 +53,7 @@ def test_kind_constants():
         "member_of",
         "tests",
         "file_changes_with",
+        "calls_route",
     )
     assert RESOLUTIONS == ("exact", "best_effort")
 

@@ -8,6 +8,16 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
 
 ### Added
 
+- __Cross-boundary HTTP route edges (limited frameworks).__ The indexer now
+  extracts server routes and client calls across languages and links them: a
+  `route` node per server route (Python Flask/FastAPI decorators `@app.get` /
+  `@router.post` / `@app.route`, and Express `app.<verb>` / `router.<verb>`),
+  and a `calls_route` edge from each client call (`fetch("/x")`,
+  `axios.<verb>("/x")`) resolved by exact `METHOD /path` match to the matching
+  route node. This is the HTTP route↔client link an LSP never sees (a
+  TypeScript `fetch` to a Python handler). Scoped to those frameworks and exact
+  path literals; unmatched calls are dropped. Also fixes a latent gap:
+  decorated Python functions are now extracted.
 - __`history` tool and CLI verb.__ Git signals for a symbol or file: the recent
   commits touching its file, the files that usually change with it (co-change
   partners), and its churn — coupling and volatility no static graph shows.

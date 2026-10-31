@@ -241,6 +241,9 @@ class _JsTsBuilder:
                 name = self._text(func)
                 if name in self._local_names:
                     self._add_unresolved(src_id, name, "calls")
+            # Cross-boundary HTTP: an Express route definition becomes a route
+            # node; a client call (fetch/axios) becomes a calls_route edge.
+            self._detect_route(node, func, src_id)
             args = node.child_by_field_name("arguments")
             if args is not None:
                 for child in args.named_children:
@@ -248,6 +251,74 @@ class _JsTsBuilder:
             return
         for child in node.named_children:
             self._emit_calls_and_refs(child, src_id)
+
+    _HTTP_VERBS = frozenset(
+        {"get", "post", "put", "patch", "delete", "head", "options"}
+    )
+
+    def _detect_route(self, call_node, func, src_id: str) -> None:
+        """Detect an Express route or a fetch/axios client call on a call node.
+
+        - ``app.get("/x", …)`` / ``router.post("/x", …)`` -> a ``route`` node
+          (server side), method from the property, path from the first string
+          argument.
+        - ``fetch("/x", …)`` -> a ``calls_route`` edge (client side), method
+          defaults to GET.
+        - ``axios.get("/x", …)`` / ``axios.post(…)`` -> a ``calls_route`` edge
+          with the method from the property.
+
+        Only the first string argument is read; a non-literal path is skipped.
+        """
+        args = call_node.child_by_field_name("arguments")
+        path = self._first_string_arg(args) if args is not None else None
+        if path is None or not path.startswith("/"):
+            return
+        # fetch("/x") — bare identifier client call.
+        if func is not None and func.type == "identifier":
+            if self._text(func) == "fetch":
+                self._add_unresolved(src_id, f"GET {path}", "calls_route")
+            return
+        # <obj>.<verb>("/x") — member expression.
+        if func is None or func.type != "member_expression":
+            return
+        prop = func.child_by_field_name("property")
+        obj = func.child_by_field_name("object")
+        verb = self._text(prop).lower() if prop is not None else ""
+        obj_name = self._text(obj).lower() if obj is not None else ""
+        if verb not in self._HTTP_VERBS:
+            return
+        if obj_name == "axios":
+            self._add_unresolved(src_id, f"{verb.upper()} {path}", "calls_route")
+        else:
+            # Treat any other receiver (app, router, server, api, …) as an
+            # Express-style route definition.
+            self._emit_route(verb.upper(), path, call_node)
+
+    def _first_string_arg(self, args) -> str | None:
+        for arg in args.named_children:
+            if arg.type in ("string", "template_string"):
+                value = self._string_value(arg)
+                if value:
+                    return value
+        return None
+
+    def _emit_route(self, method: str, path: str, node) -> None:
+        """Emit a ``route`` node for a server-side HTTP route definition."""
+        qn = f"{method} {path}"
+        start, end = self._line(node)
+        route_id = _node_id("route", qn, self.path, start)
+        self.nodes.append(
+            Node(
+                node_id=route_id,
+                kind="route",
+                name=path,
+                qualified_name=qn,
+                path=self.path,
+                start_line=start,
+                end_line=end,
+                language=self.language,
+            )
+        )
 
     # -- small parsing helpers -------------------------------------------
 

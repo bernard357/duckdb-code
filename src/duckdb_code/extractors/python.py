@@ -170,12 +170,104 @@ class _PythonBuilder:
             self._handle_class(child, scope_qn, container_id)
         elif kind == "function_definition":
             self._handle_function(child, scope_qn, container_id)
+        elif kind == "decorated_definition":
+            self._handle_decorated(child, scope_qn, container_id)
         elif kind == "import_statement":
             self._handle_import(child, aliased=False)
         elif kind == "import_from_statement":
             self._handle_import_from(child)
         else:
             self._walk_expressions(child, container_id)
+
+    def _handle_decorated(self, node, scope_qn: str, container_id: str) -> None:
+        """Handle a decorated class/function: extract the inner definition, and
+        detect a route decorator (``@app.get("/x")`` / ``@router.post(...)`` /
+        ``@app.route("/x")``) that marks the function as an HTTP route handler.
+
+        The inner definition is extracted exactly as an undecorated one; the
+        route scan is additive and only emits a ``route`` node when a decorator
+        matches the Flask/FastAPI shape.
+        """
+        inner = node.child_by_field_name("definition")
+        if inner is None:
+            # Fall back to the last named child (the wrapped definition).
+            named = node.named_children
+            inner = named[-1] if named else None
+        if inner is None:
+            return
+        route = self._route_from_decorators(node)
+        if inner.type == "class_definition":
+            self._handle_class(inner, scope_qn, container_id)
+        elif inner.type == "function_definition":
+            handler_id = self._handle_function(inner, scope_qn, container_id)
+            if route is not None and handler_id is not None:
+                self._emit_route(route[0], route[1], inner)
+
+    def _route_from_decorators(self, decorated) -> tuple[str, str] | None:
+        """Return ``(method, path)`` for a Flask/FastAPI route decorator, or None.
+
+        Recognizes ``@<obj>.<method>("/path")`` where method is an HTTP verb
+        (get/post/put/patch/delete) and ``@<obj>.route("/path")`` (Flask, method
+        defaults to GET). Only the first matching decorator is used.
+        """
+        verbs = {"get", "post", "put", "patch", "delete", "head", "options"}
+        for child in decorated.named_children:
+            if child.type != "decorator":
+                continue
+            call = child.named_children[0] if child.named_children else None
+            if call is None or call.type != "call":
+                continue
+            fn = call.child_by_field_name("function")
+            args = call.child_by_field_name("arguments")
+            if fn is None or fn.type != "attribute" or args is None:
+                continue
+            attr = fn.child_by_field_name("attribute")
+            method = self._text(attr).lower() if attr is not None else ""
+            path = self._first_string_arg(args)
+            if path is None:
+                continue
+            if method in verbs:
+                return (method.upper(), path)
+            if method == "route":
+                return ("GET", path)
+        return None
+
+    def _first_string_arg(self, args) -> str | None:
+        """Return the literal value of the first string argument, or None."""
+        for arg in args.named_children:
+            if arg.type == "string":
+                return self._string_value(arg)
+        return None
+
+    @staticmethod
+    def _string_value(node) -> str:
+        """Strip quotes/prefix from a tree-sitter string node's text."""
+        raw = node.text.decode("utf-8", errors="replace")
+        # Drop a prefix like f/r/b, then the surrounding quotes.
+        while raw and raw[0] not in ("'", '"'):
+            raw = raw[1:]
+        if len(raw) >= 2 and raw[0] in ("'", '"'):
+            quote = raw[0]
+            raw = raw.strip(quote)
+        return raw
+
+    def _emit_route(self, method: str, path: str, handler_node) -> None:
+        """Emit a ``route`` node for a server-side HTTP route handler."""
+        qn = f"{method} {path}"
+        start, end = self._line(handler_node)
+        route_id = _node_id("route", qn, self.path, start)
+        self.nodes.append(
+            Node(
+                node_id=route_id,
+                kind="route",
+                name=path,
+                qualified_name=qn,
+                path=self.path,
+                start_line=start,
+                end_line=end,
+                language="python",
+            )
+        )
 
     def _handle_class(self, node, scope_qn: str, container_id: str) -> None:
         name_node = node.child_by_field_name("name")
@@ -196,10 +288,10 @@ class _PythonBuilder:
         if body is not None:
             self._walk_body(body, scope_qn=qn, container_id=class_id)
 
-    def _handle_function(self, node, scope_qn: str, container_id: str) -> None:
+    def _handle_function(self, node, scope_qn: str, container_id: str) -> str | None:
         name_node = node.child_by_field_name("name")
         if name_node is None:
-            return
+            return None
         name = self._text(name_node)
         qn = f"{scope_qn}.{name}" if scope_qn else name
         func_id = self._add_node("function", name, qn, node)
@@ -209,6 +301,7 @@ class _PythonBuilder:
         if body is not None:
             # Nested defs append the defining function name to the scope.
             self._walk_function_body(body, scope_qn=qn, owner_id=func_id, bound=params)
+        return func_id
 
     def _walk_function_body(
         self, body, scope_qn: str, owner_id: str, bound: set[str]

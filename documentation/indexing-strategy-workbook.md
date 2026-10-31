@@ -112,14 +112,17 @@ contract that keeps the schema and the tools in lock-step. The core node/edge
 kinds already present stay as the backbone; the additions are strictly
 additive.
 
-__Build status.__ Shipped at schema version 4: the `edges.confidence` column
+__Build status.__ Shipped at schema version 5: the `edges.confidence` column
 (with `resolution` derived from it), the `nodes.centrality` column, `member_of`
-community edges, `tests` edges, the `vectors` table, and git co-change
-(`file_changes_with` edges plus per-file `files.churn`) — all produced by the
-deferred-index pipeline and its enrichment / post-index phases. Git co-change
-is the one place the indexer shells out to `git log` (recent-commit window),
-degrading to no edges when git or a repo is absent. Still staged, landing with
-the tool it serves: the cross-boundary `route` edges (for `links`).
+community edges, `tests` edges, the `vectors` table, git co-change
+(`file_changes_with` edges plus per-file `files.churn`) with the recent-commit
+`commits` table, and cross-boundary HTTP `route` nodes with `calls_route` edges
+— all produced by the deferred-index pipeline and its enrichment / post-index
+phases. Git history is the one place the indexer shells out to `git log`
+(recent-commit window), degrading to no data when git or a repo is absent. The
+route edges cover a limited set of frameworks (Flask/FastAPI, Express, and
+fetch/axios clients) matched on exact `METHOD /path` literals — the full
+data-layer delta for the tool contract is now in place.
 
 ## Semantic search: vector storage {#vectors}
 
