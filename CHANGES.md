@@ -6,6 +6,16 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
 
 ## Unreleased
 
+## v261031
+
+The first release of the renamed `duckdb-code`: the full LSP-complementary MCP
+tool surface over a local DuckDB code graph. Adds the schema v2–v5 data layer
+(confidence cascade, index-time analytics, semantic embeddings, `tests` and
+git co-change edges, cross-boundary route edges) and twelve MCP tools — search,
+find_similar, overview, impact, related_tests, history, links, analytics,
+index_status, context_for_change, report, export — with `explain` kept on the
+SDK/CLI.
+
 ### Added
 
 - __`context_for_change` tool and CLI verb.__ The review/PR primitive: the
