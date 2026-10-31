@@ -226,6 +226,31 @@ def impact(
 
 
 @app.command()
+def search(
+    query: str = typer.Argument(..., help="What to look for, in words."),
+    db: str | None = typer.Option(None, "--db", help="DuckDB file path."),
+    limit: int = typer.Option(10, "--limit", help="Maximum ranked results."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON."),
+) -> None:
+    """Find symbols by intent (ranked semantic search)."""
+    store = CodeStore(db_path=db)
+    try:
+        result = store.search(query, limit=limit)
+    finally:
+        store.close()
+    if as_json:
+        typer.echo(result.model_dump_json())
+    else:
+        typer.echo(f"Query   : {result.query}")
+        typer.echo(f"Results : {len(result.results)}")
+        for hit in result.results:
+            typer.echo(
+                f"  {hit.score:.3f}  {hit.node.kind}  "
+                f"{hit.node.qualified_name}  {hit.node.path}"
+            )
+
+
+@app.command()
 def explain(
     target: str = typer.Argument(..., help="Symbol or file path."),
     db: str | None = typer.Option(None, "--db", help="DuckDB file path."),

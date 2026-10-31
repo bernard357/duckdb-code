@@ -30,6 +30,8 @@ from duckdb_code.models import (
     ImpactResult,
     Node,
     Report,
+    SearchHit,
+    SearchResult,
 )
 from duckdb_code.store import CodeStore
 
@@ -50,6 +52,8 @@ __all__ = [
     "Node",
     "PythonExtractor",
     "Report",
+    "SearchHit",
+    "SearchResult",
     "Settings",
     "build_server",
     "compute_etag",

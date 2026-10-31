@@ -180,10 +180,11 @@ to hand off to the LSP.
 
 The tools land by value, each as a follow-on implementation issue referencing
 this contract and blocked on the [indexing
-strategy](indexing-strategy-workbook.md) element it reads:
+strategy](indexing-strategy-workbook.md) element it reads. `search` has shipped
+(ranked semantic search over the `vectors` table); the rest follow:
 
-1. __MVP__ (most value for a small build): `search`, `overview`, `impact`,
-   `related_tests`, `history`.
+1. __MVP__ (most value for a small build): `search` (shipped), `overview`,
+   `impact`, `related_tests`, `history`.
 2. __Differentiators__ (the gap nobody covers well): `links`, `find_similar`.
 3. __Remaining__: `analytics`, `context_for_change`, `index_status`, and
    folding `explain` / reshaping `report`.

@@ -1,8 +1,9 @@
 """MCP-over-stdio server exposing duckdb-code query tools.
 
 Any MCP client (Docker Agent, Claude Desktop, Claude Code, Cursor) can spawn
-``duckdb-code mcp`` as a subprocess and call the four tools ``impact``,
-``explain``, ``report``, and ``export``. The server also advertises a
+``duckdb-code mcp`` as a subprocess and call the five tools ``search``,
+``impact``, ``explain``, ``report``, and ``export``. The server also advertises
+a
 ``description`` and ``instructions`` so a client can route to it and pick a
 tool by intent. The server is built on the official ``mcp`` SDK.
 
@@ -74,6 +75,8 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             "Use this server when a task needs the structure of the codebase or "
             "the relationships between its symbols and files, rather than reading "
             "files one at a time. Pick the tool by intent:\n"
+            "- `search` — find symbols by intent when you don't know the name "
+            "(ranked semantic search); the first tool to reach for.\n"
             "- `explain` — review the structure around a given symbol or file "
             "(what it defines, what it depends on, what depends on it).\n"
             "- `impact` — evaluate the implications of a change by finding "
@@ -90,6 +93,39 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             "not what exactly is at a cursor position."
         ),
     )
+
+    @_described(server)
+    def search(query: str, limit: int = 10) -> dict:
+        """Use this to find symbols by intent when you don't know the name.
+
+        Ranked semantic search over the indexed symbols — answers "where do we
+        retry failed payments?" or "the http client setup" without a known
+        identifier. This is the first tool to reach for when orienting in an
+        unfamiliar codebase; follow a hit's ``path``/``range`` to the source or
+        to `explain`/`impact` for structure and blast radius.
+
+        Arguments:
+        - query: a natural-language or keyword description of what you are
+          looking for.
+        - limit: maximum number of ranked results (default 10).
+
+        Returns one JSON object with:
+        - query: the query string, echoed back.
+        - results: symbols ranked most-relevant first, each
+          {node, score} where ``node`` carries node_id, kind, name,
+          qualified_name, path, start_line, end_line, language, and ``score``
+          is the cosine similarity of the symbol to the query (higher is
+          closer). Ties break by qualified_name then node_id for a stable
+          order.
+
+        Returns an empty ``results`` list when the index carries no embeddings
+        (built without the embedding backend) or nothing matches.
+        """
+        store = CodeStore(settings=resolved)
+        try:
+            return store.search(query, limit=limit).model_dump()
+        finally:
+            store.close()
 
     @_described(server)
     def impact(target: str, depth: int | None = None) -> dict:

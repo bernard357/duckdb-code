@@ -79,3 +79,35 @@ def test_hashing_is_deterministic_and_normalized():
     assert a == b  # deterministic
     norm = sum(v * v for v in a) ** 0.5
     assert abs(norm - 1.0) < 1e-9  # L2-normalized
+
+
+def test_search_ranks_symbols_by_relevance(tmp_path):
+    store = _indexed(tmp_path)
+    result = store.search("charge payment", limit=5)
+    assert result.query == "charge payment"
+    assert result.results  # the fixture has payment/charge symbols
+    assert len(result.results) <= 5
+    # Scores are descending (ranked most-relevant first).
+    scores = [hit.score for hit in result.results]
+    assert scores == sorted(scores, reverse=True)
+    # Every hit carries a real node with path+range (the result contract).
+    top = result.results[0]
+    assert top.node.path
+    assert top.node.start_line >= 1
+    store.close()
+
+
+def test_search_empty_query_and_zero_limit_return_empty(tmp_path):
+    store = _indexed(tmp_path)
+    assert store.search("", limit=5).results == []
+    assert store.search("charge", limit=0).results == []
+    store.close()
+
+
+def test_search_without_embeddings_returns_empty(tmp_path):
+    # An index whose vectors table is empty (e.g. embedding backend failed)
+    # still answers, with nothing to rank, rather than raising.
+    store = _indexed(tmp_path)
+    store._con.execute("DELETE FROM vectors")
+    assert store.search("charge", limit=5).results == []
+    store.close()

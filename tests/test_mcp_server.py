@@ -43,10 +43,10 @@ def _result(db, name, args):
     return json.loads(outcome.content[0].text)
 
 
-def test_exactly_four_tools_registered(indexed_db):
+def test_exactly_five_tools_registered(indexed_db):
     server = _server(indexed_db)
     names = {tool.name for tool in asyncio.run(server.list_tools())}
-    assert names == {"impact", "explain", "report", "export"}
+    assert names == {"search", "impact", "explain", "report", "export"}
 
 
 def test_streamable_http_app_carries_the_tools(indexed_db):
@@ -57,7 +57,7 @@ def test_streamable_http_app_carries_the_tools(indexed_db):
     app = server.streamable_http_app()
     assert isinstance(app, Starlette)
     names = {tool.name for tool in asyncio.run(server.list_tools())}
-    assert names == {"impact", "explain", "report", "export"}
+    assert names == {"search", "impact", "explain", "report", "export"}
 
 
 def test_impact_tool_returns_one_impact_result(indexed_db):

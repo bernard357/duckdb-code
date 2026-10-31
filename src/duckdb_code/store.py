@@ -31,6 +31,8 @@ from duckdb_code.models import (
     ImpactResult,
     Node,
     Report,
+    SearchHit,
+    SearchResult,
 )
 
 if TYPE_CHECKING:
@@ -654,6 +656,48 @@ class CodeStore:
             branch=meta.get("branch"),
             head_commit=meta.get("head_commit"),
         )
+
+    def search(self, query: str, *, limit: int = 10) -> SearchResult:
+        """Rank indexed symbols by semantic relevance to ``query``.
+
+        Embeds ``query`` with the same backend the index recorded (so the query
+        and stored vectors share a space), then ranks the ``vectors`` table by
+        cosine similarity in DuckDB — no Python-side distance loop — and joins
+        to ``nodes`` for the result fields. Returns at most ``limit`` hits, most
+        relevant first. An index with no stored embeddings (or an empty query)
+        returns ``results=[]`` rather than raising, so a graph built without the
+        embedding backend still answers, just with nothing to rank.
+
+        A ``limit`` of zero or negative yields an empty result. Ties in score
+        are broken deterministically by ``qualified_name`` then ``node_id`` so
+        repeated queries return a stable order.
+        """
+        query = query.strip()
+        if not query or limit <= 0:
+            return SearchResult(query=query, results=[])
+        has_vectors = self._con.execute("SELECT COUNT(*) FROM vectors").fetchone()
+        if not has_vectors or has_vectors[0] == 0:
+            return SearchResult(query=query, results=[])
+
+        from duckdb_code.embedders import resolve_embedder
+
+        embedder = resolve_embedder(self.settings.embedder)
+        query_vector = embedder.embed([query])[0]
+        rows = self._con.execute(
+            f"""
+            SELECT {self._node_select("n")},
+                   list_cosine_similarity(v.embedding, ?) AS score
+            FROM vectors v JOIN nodes n ON n.node_id = v.node_id
+            WHERE score IS NOT NULL
+            ORDER BY score DESC, n.qualified_name, n.node_id
+            LIMIT ?
+            """,
+            [query_vector, limit],
+        ).fetchall()
+        results = [
+            SearchHit(node=self._row_to_node(row[:-1]), score=row[-1]) for row in rows
+        ]
+        return SearchResult(query=query, results=results)
 
     def export(self) -> CodeExport:
         """Export the whole graph in the viewer's Cytoscape data contract.

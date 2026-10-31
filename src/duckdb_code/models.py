@@ -216,3 +216,27 @@ class CodeExport(BaseModel):
     meta: Report
     nodes: list[CodeExportNode]
     edges: list[CodeExportEdge]
+
+
+class SearchHit(BaseModel):
+    """One ranked symbol in a :class:`SearchResult`.
+
+    ``node`` is the matched symbol; ``score`` is the cosine similarity of its
+    stored embedding to the query embedding (higher is closer, range -1..1 but
+    in practice 0..1 for normalized identifier vectors).
+    """
+
+    node: Node
+    score: float
+
+
+class SearchResult(BaseModel):
+    """The result of a ``search`` query: symbols ranked by semantic relevance.
+
+    ``query`` is the search string, echoed back. ``results`` is the ranked list
+    (most relevant first), capped at the requested limit. An index built with
+    no embeddings (or a query that matches nothing) returns ``results=[]``.
+    """
+
+    query: str
+    results: list[SearchHit]

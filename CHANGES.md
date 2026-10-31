@@ -8,6 +8,11 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
 
 ### Added
 
+- __`search` tool and CLI verb.__ Ranked semantic search over the indexed
+  symbols — "where do we retry failed payments?" without a known name — the
+  first tool of the MCP contract. Exposed as `CodeStore.search(query, limit)`,
+  the `search` MCP tool, and `duckdb-code search <query>`; ranks the `vectors`
+  table by cosine similarity in DuckDB and returns symbols with `path`/`range`.
 - __Semantic embeddings and the `vectors` table (schema v3).__ A full index now
   embeds each searchable symbol (modules, classes, functions, pages, headings)
   and stores one vector per node in a `vectors` table keyed by `node_id`,
