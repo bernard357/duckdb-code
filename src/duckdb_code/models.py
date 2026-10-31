@@ -21,6 +21,7 @@ EDGE_KINDS = (
     "tagged",
     "member_of",
     "tests",
+    "file_changes_with",
 )
 RESOLUTIONS = ("exact", "best_effort")
 

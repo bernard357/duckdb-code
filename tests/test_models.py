@@ -51,6 +51,7 @@ def test_kind_constants():
         "tagged",
         "member_of",
         "tests",
+        "file_changes_with",
     )
     assert RESOLUTIONS == ("exact", "best_effort")
 

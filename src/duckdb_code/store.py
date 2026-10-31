@@ -74,7 +74,8 @@ SCHEMA_DDL = (
         path        TEXT NOT NULL PRIMARY KEY,
         language    TEXT NOT NULL,
         etag        TEXT NOT NULL,
-        stamped_at  TIMESTAMP
+        stamped_at  TIMESTAMP,
+        churn       INTEGER NOT NULL DEFAULT 0
     )
     """,
     """
@@ -129,9 +130,11 @@ INDEX_DDL = (
 # confidence, the source of truth from which the ``resolution`` flag is
 # derived) and ``nodes.centrality`` (index-time PageRank-style rank). Version 3
 # adds the ``vectors`` table (one per-symbol embedding, keyed by ``node_id``)
-# backing semantic search. A store opened against an older file recreates the
-# schema on the next full index.
-SCHEMA_VERSION = 3
+# backing semantic search. Version 4 adds ``files.churn`` (per-file commit
+# count) and the ``file_changes_with`` edge kind (git co-change between files).
+# A store opened against an older file recreates the schema on the next full
+# index.
+SCHEMA_VERSION = 4
 
 
 class CodeStore:

@@ -197,7 +197,7 @@ def test_explain_lists_are_ordered(tmp_path):
 def test_report_aggregates_kinds_languages_and_roots(tmp_path):
     store = _indexed(tmp_path)
     report = store.report()
-    assert report.schema_version == 3
+    assert report.schema_version == 4
     assert report.languages == ["python", "typescript"]
     assert report.files_by_language == {"python": 5, "typescript": 2}
     assert report.nodes_by_kind["class"] == 4

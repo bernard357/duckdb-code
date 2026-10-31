@@ -8,6 +8,14 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
 
 ### Added
 
+- __Git co-change edges and per-file churn (schema v4).__ The enrichment phase
+  now mines recent git history (`git log` over the last 500 commits) for files
+  that change together, adding `file_changes_with` edges between file nodes
+  (confidence = normalized co-occurrence) and recording per-file `churn` on the
+  `files` table. This is the one place the indexer shells out to git; it
+  degrades gracefully — no git, no repo, or a git error adds no edges and
+  leaves churn zero, so the index still builds. Backs the forthcoming `history`
+  and `context_for_change` tools.
 - __`related_tests` tool and CLI verb.__ Returns the tests to run after editing
   a symbol or file — the test symbols that reach it via the `tests` edges,
   resolved the same way as `impact`/`explain`. Exposed as

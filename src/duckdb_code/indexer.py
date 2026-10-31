@@ -16,6 +16,7 @@ in isolation by the seam test.
 import datetime
 import logging
 import os
+import subprocess
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
@@ -842,7 +843,8 @@ def _noop_report(store: CodeStore, skipped: int, *, mode: str) -> IndexReport:
     # so the report's edge total matches the full/incremental paths' count of
     # resolved content edges.
     edge_row = con.execute(
-        "SELECT COUNT(*) FROM edges WHERE kind != 'member_of'"
+        "SELECT COUNT(*) FROM edges "
+        "WHERE kind NOT IN ('member_of', 'file_changes_with')"
     ).fetchone()
     node_count = node_row[0] if node_row else 0
     edge_count = edge_row[0] if edge_row else 0
@@ -1053,6 +1055,7 @@ def _finalize(store: CodeStore) -> None:
     _compute_centrality(store)
     _compute_communities(store)
     _compute_embeddings(store)
+    _compute_co_change(store)
 
 
 def _analytics_adjacency(store: CodeStore) -> tuple[list[str], dict[str, list[str]]]:
@@ -1204,6 +1207,164 @@ def _compute_embeddings(store: CodeStore) -> None:
         "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
         ["embedding_dimensions", str(embedder.dimensions)],
     )
+
+
+# How many recent commits to mine for co-change. A snapshot index does not need
+# the whole history; the recent window captures current coupling and bounds the
+# cost on a large repo.
+_CO_CHANGE_COMMIT_WINDOW = 500
+# A commit touching more than this many files is a sweeping change (a rename, a
+# reformat, a license header) whose pairwise co-occurrences are noise, not
+# coupling — skipped so it does not fabricate a dense clique of edges.
+_CO_CHANGE_MAX_FILES_PER_COMMIT = 50
+# Only co-change pairs seen at least this many times become edges, so a single
+# incidental co-edit does not imply coupling.
+_CO_CHANGE_MIN_PAIRS = 2
+
+
+def _compute_co_change(store: CodeStore) -> None:
+    """Derive git co-change edges and per-file churn from recent history.
+
+    Runs ``git log`` over the last :data:`_CO_CHANGE_COMMIT_WINDOW` commits,
+    counts how often each pair of INDEXED files changed in the same commit
+    (``file_changes_with`` edges between their file nodes, confidence = the
+    co-occurrence count normalized against the strongest pair), and records
+    per-file churn (the number of those commits that touched the file).
+
+    This is the one place the indexer shells out to ``git``; it degrades
+    gracefully — a missing ``git``, a non-repo folder, or any git error adds no
+    edges and leaves churn at zero, exactly like the embedding pass, so an index
+    still builds. Commits touching more than
+    :data:`_CO_CHANGE_MAX_FILES_PER_COMMIT` files are skipped as sweeping noise,
+    and a pair needs :data:`_CO_CHANGE_MIN_PAIRS` co-occurrences to earn an edge.
+    """
+    con = store._con
+    # Map stored (folder-relative) path -> its file node id, for indexed files.
+    file_nodes = dict(
+        con.execute("SELECT path, node_id FROM nodes WHERE kind = 'file'").fetchall()
+    )
+    if not file_nodes:
+        return
+    root = store.settings.root
+    if not root:
+        return
+
+    commits = _git_log_file_sets(Path(root))
+    if not commits:
+        return
+
+    indexed = set(file_nodes)
+    churn: dict[str, int] = {}
+    pair_counts: dict[tuple[str, str], int] = {}
+    for files in commits:
+        touched = [f for f in files if f in indexed]
+        if not touched or len(touched) > _CO_CHANGE_MAX_FILES_PER_COMMIT:
+            continue
+        for path in touched:
+            churn[path] = churn.get(path, 0) + 1
+        ordered = sorted(set(touched))
+        for i, a in enumerate(ordered):
+            for b in ordered[i + 1 :]:
+                pair_counts[(a, b)] = pair_counts.get((a, b), 0) + 1
+
+    if churn:
+        con.executemany(
+            "UPDATE files SET churn = ? WHERE path = ?",
+            [(count, path) for path, count in churn.items()],
+        )
+
+    pairs = {p: c for p, c in pair_counts.items() if c >= _CO_CHANGE_MIN_PAIRS}
+    if not pairs:
+        return
+    strongest = max(pairs.values())
+    # One undirected edge per pair, stored once (a -> b); confidence carries the
+    # normalized coupling strength so a consumer can rank partners.
+    con.executemany(
+        "INSERT INTO edges (src_id, dst_id, kind, path, resolution, confidence) "
+        "VALUES (?, ?, 'file_changes_with', '', 'best_effort', ?)",
+        [
+            (file_nodes[a], file_nodes[b], count / strongest)
+            for (a, b), count in pairs.items()
+        ],
+    )
+
+
+def _git_log_file_sets(folder: Path) -> list[list[str]]:
+    """Return the per-commit file lists from recent git history, or ``[]``.
+
+    Shells out to ``git log --name-only`` over the recent commit window, parsed
+    into one list of folder-relative paths per commit. Returns ``[]`` when git
+    is unavailable, the folder is not a repository, or git errors — the caller
+    then adds no co-change data. Paths are reported relative to the repo root;
+    they are matched against stored paths by the caller.
+    """
+    try:
+        proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(folder),
+                "log",
+                f"-n{_CO_CHANGE_COMMIT_WINDOW}",
+                "--name-only",
+                "--pretty=format:%x00",  # NUL marks a new commit
+                "--no-renames",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:  # pragma: no cover
+        logger.warning("skipping git co-change (git unavailable): %s", exc)
+        return []
+    if proc.returncode != 0:
+        logger.info("skipping git co-change (not a git repo or git error)")
+        return []
+
+    # The indexed folder may be a subdirectory of the repo; git reports paths
+    # relative to the repo root, while stored paths are relative to the indexed
+    # folder. Rebase git paths onto the indexed folder where possible.
+    prefix = _repo_relative_prefix(folder)
+    commits: list[list[str]] = []
+    current: list[str] = []
+    for line in proc.stdout.splitlines():
+        if line == "\x00" or line == "":
+            if current:
+                commits.append(current)
+                current = []
+            continue
+        rel = line
+        if prefix and line.startswith(prefix):
+            rel = line[len(prefix) :]
+        elif prefix:
+            # Outside the indexed subtree; cannot match a stored path.
+            continue
+        current.append(rel)
+    if current:
+        commits.append(current)
+    return commits
+
+
+def _repo_relative_prefix(folder: Path) -> str:
+    """Return the indexed folder's path relative to the git repo root, as a
+    POSIX prefix ending in ``/`` (empty when the folder IS the repo root).
+
+    Degrades to ``""`` on any git error, so a failure just means no rebasing.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(folder), "rev-parse", "--show-prefix"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):  # pragma: no cover
+        return ""
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout.strip()
 
 
 def _write(
