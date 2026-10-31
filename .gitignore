@@ -10,3 +10,4 @@ node_modules/
 documentation/.vitepress/dist/
 documentation/.vitepress/cache/
 .DS_Store
+tmp/
