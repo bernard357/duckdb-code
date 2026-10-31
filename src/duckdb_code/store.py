@@ -227,7 +227,10 @@ def _git_changed_ranges(
     """
     args = ["git", "-C", root, "diff", "--unified=0", "--no-color", "--no-renames"]
     if base:
-        args.append(base)
+        # "--end-of-options" forces the caller-supplied ref to be read as a
+        # revision even if it begins with "-" (never a git flag); the trailing
+        # "--" then ends revision parsing so it is never taken as a pathspec.
+        args += ["--end-of-options", base, "--"]
     try:
         proc = subprocess.run(
             args, capture_output=True, text=True, timeout=30, check=False

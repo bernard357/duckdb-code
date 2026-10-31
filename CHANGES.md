@@ -18,7 +18,10 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
   change). Reads git at query time against `meta.root`, degrading to empty
   `changed`/`neighbourhood` when git is unavailable, the root is not a repo, or
   the diff touches nothing indexed. Exposed as `CodeStore.context_for_change()`,
-  the `context_for_change` MCP tool, and `duckdb-code context-for-change`.
+  the `context_for_change` MCP tool, and `duckdb-code context-for-change`. The
+  caller-supplied `base` ref is passed to `git diff` after `--end-of-options`
+  and a trailing `--`, so a ref beginning with `-` can never be read as a git
+  flag.
 - __`analytics` tool and CLI verb.__ Whole-repo structural views for planning
   and review, all read from existing index data (no git, no re-parse):
   `cycles` (dependency strongly-connected components over
