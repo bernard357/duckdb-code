@@ -111,3 +111,35 @@ def test_search_without_embeddings_returns_empty(tmp_path):
     store._con.execute("DELETE FROM vectors")
     assert store.search("charge", limit=5).results == []
     store.close()
+
+
+def test_find_similar_by_symbol_excludes_self(tmp_path):
+    store = _indexed(tmp_path)
+    # Resolve a known symbol, then find_similar on it: it must not return
+    # itself, and every hit is a real node.
+    result = store.find_similar("payments.charge.Charge", limit=5)
+    assert result.results
+    qns = {hit.node.qualified_name for hit in result.results}
+    assert "payments.charge.Charge" not in qns  # self excluded
+    scores = [hit.score for hit in result.results]
+    assert scores == sorted(scores, reverse=True)
+    store.close()
+
+
+def test_find_similar_by_snippet(tmp_path):
+    store = _indexed(tmp_path)
+    # An unresolved string is embedded as a snippet and ranked.
+    result = store.find_similar("def charge(self, amount): ...", limit=3)
+    assert len(result.results) <= 3
+    for hit in result.results:
+        assert hit.node.path
+    store.close()
+
+
+def test_find_similar_empty_and_no_vectors(tmp_path):
+    store = _indexed(tmp_path)
+    assert store.find_similar("", limit=5).results == []
+    assert store.find_similar("x", limit=0).results == []
+    store._con.execute("DELETE FROM vectors")
+    assert store.find_similar("payments.charge.Charge", limit=5).results == []
+    store.close()

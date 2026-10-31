@@ -699,6 +699,90 @@ class CodeStore:
         ]
         return SearchResult(query=query, results=results)
 
+    def find_similar(self, target: str, *, limit: int = 10) -> SearchResult:
+        """Rank indexed symbols by similarity to ``target`` — a symbol or snippet.
+
+        Answers "how do we usually do this here?" and surfaces duplication.
+        ``target`` is resolved as a symbol or file path first: when it matches
+        indexed node(s) that carry stored embeddings, those stored vectors seed
+        the query (averaged when several match) and the seed nodes are excluded
+        from the ranking, so a symbol finds *other* code built like it. When the
+        target resolves to nothing, it is treated as a raw code snippet and
+        embedded directly. Either way the ``vectors`` table is ranked by cosine
+        similarity in DuckDB, most similar first, capped at ``limit``.
+
+        Returns ``results=[]`` for an empty target, a non-positive ``limit``, or
+        an index with no stored embeddings — never raising. Ties break by
+        ``qualified_name`` then ``node_id`` for a stable order.
+        """
+        target = target.strip()
+        if not target or limit <= 0:
+            return SearchResult(query=target, results=[])
+        has_vectors = self._con.execute("SELECT COUNT(*) FROM vectors").fetchone()
+        if not has_vectors or has_vectors[0] == 0:
+            return SearchResult(query=target, results=[])
+
+        # Resolve the target to indexed nodes; a symbol/path uses its stored
+        # vector(s), an unresolved string is embedded as a snippet.
+        resolved, _ambiguous, _origin = self._resolve_target(target)
+        seed_ids = [node.node_id for node in resolved]
+        query_vector, exclude = self._similarity_query_vector(target, seed_ids)
+        if query_vector is None:
+            return SearchResult(query=target, results=[])
+
+        exclude_clause = ""
+        params: list = [query_vector]
+        if exclude:
+            placeholders = ", ".join(["?"] * len(exclude))
+            exclude_clause = f"AND v.node_id NOT IN ({placeholders})"
+            params.extend(exclude)
+        params.append(limit)
+        rows = self._con.execute(
+            f"""
+            SELECT {self._node_select("n")},
+                   list_cosine_similarity(v.embedding, ?) AS score
+            FROM vectors v JOIN nodes n ON n.node_id = v.node_id
+            WHERE score IS NOT NULL {exclude_clause}
+            ORDER BY score DESC, n.qualified_name, n.node_id
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+        results = [
+            SearchHit(node=self._row_to_node(row[:-1]), score=row[-1]) for row in rows
+        ]
+        return SearchResult(query=target, results=results)
+
+    def _similarity_query_vector(
+        self, target: str, seed_ids: list[str]
+    ) -> tuple[list[float] | None, list[str]]:
+        """Return ``(query_vector, exclude_ids)`` for :meth:`find_similar`.
+
+        When ``seed_ids`` name symbols with stored vectors, the query vector is
+        the component-wise mean of those vectors (so several resolved nodes seed
+        one query) and the seeds are excluded from the ranking. When no seed has
+        a stored vector, ``target`` is embedded as a raw snippet and nothing is
+        excluded. Returns ``(None, [])`` when there is nothing to embed.
+        """
+        if seed_ids:
+            placeholders = ", ".join(["?"] * len(seed_ids))
+            vectors = [
+                row[0]
+                for row in self._con.execute(
+                    f"SELECT embedding FROM vectors WHERE node_id IN ({placeholders})",
+                    seed_ids,
+                ).fetchall()
+            ]
+            if vectors:
+                dims = len(vectors[0])
+                mean = [sum(v[i] for v in vectors) / len(vectors) for i in range(dims)]
+                return mean, seed_ids
+        # Snippet path: embed the raw target text.
+        from duckdb_code.embedders import resolve_embedder
+
+        embedder = resolve_embedder(self.settings.embedder)
+        return embedder.embed([target])[0], []
+
     def export(self) -> CodeExport:
         """Export the whole graph in the viewer's Cytoscape data contract.
 

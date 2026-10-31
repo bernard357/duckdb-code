@@ -251,6 +251,31 @@ def search(
 
 
 @app.command()
+def find_similar(
+    target: str = typer.Argument(..., help="A symbol, file path, or code snippet."),
+    db: str | None = typer.Option(None, "--db", help="DuckDB file path."),
+    limit: int = typer.Option(10, "--limit", help="Maximum ranked matches."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON."),
+) -> None:
+    """Find code built like a symbol or snippet (house patterns, duplication)."""
+    store = CodeStore(db_path=db)
+    try:
+        result = store.find_similar(target, limit=limit)
+    finally:
+        store.close()
+    if as_json:
+        typer.echo(result.model_dump_json())
+    else:
+        typer.echo(f"Query   : {result.query}")
+        typer.echo(f"Matches : {len(result.results)}")
+        for hit in result.results:
+            typer.echo(
+                f"  {hit.score:.3f}  {hit.node.kind}  "
+                f"{hit.node.qualified_name}  {hit.node.path}"
+            )
+
+
+@app.command()
 def explain(
     target: str = typer.Argument(..., help="Symbol or file path."),
     db: str | None = typer.Option(None, "--db", help="DuckDB file path."),

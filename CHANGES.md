@@ -8,6 +8,12 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
 
 ### Added
 
+- __`find_similar` tool and CLI verb.__ Finds code built like a given symbol or
+  snippet — "how do we usually do this here?" and duplication detection. A
+  resolved symbol uses its stored embedding (and is excluded from its own
+  results); an unresolved string is embedded as a snippet. Exposed as
+  `CodeStore.find_similar(target, limit)`, the `find_similar` MCP tool, and
+  `duckdb-code find-similar <target>`.
 - __`search` tool and CLI verb.__ Ranked semantic search over the indexed
   symbols — "where do we retry failed payments?" without a known name — the
   first tool of the MCP contract. Exposed as `CodeStore.search(query, limit)`,

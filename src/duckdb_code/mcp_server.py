@@ -1,9 +1,9 @@
 """MCP-over-stdio server exposing duckdb-code query tools.
 
 Any MCP client (Docker Agent, Claude Desktop, Claude Code, Cursor) can spawn
-``duckdb-code mcp`` as a subprocess and call the five tools ``search``,
-``impact``, ``explain``, ``report``, and ``export``. The server also advertises
-a
+``duckdb-code mcp`` as a subprocess and call the six tools ``search``,
+``find_similar``, ``impact``, ``explain``, ``report``, and ``export``. The
+server also advertises a
 ``description`` and ``instructions`` so a client can route to it and pick a
 tool by intent. The server is built on the official ``mcp`` SDK.
 
@@ -77,6 +77,8 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             "files one at a time. Pick the tool by intent:\n"
             "- `search` — find symbols by intent when you don't know the name "
             "(ranked semantic search); the first tool to reach for.\n"
+            "- `find_similar` — find code built like a given symbol or snippet "
+            "(house patterns, duplication).\n"
             "- `explain` — review the structure around a given symbol or file "
             "(what it defines, what it depends on, what depends on it).\n"
             "- `impact` — evaluate the implications of a change by finding "
@@ -124,6 +126,38 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         store = CodeStore(settings=resolved)
         try:
             return store.search(query, limit=limit).model_dump()
+        finally:
+            store.close()
+
+    @_described(server)
+    def find_similar(target: str, limit: int = 10) -> dict:
+        """Use this to find code built the same way as a symbol or snippet.
+
+        Answers "how do we usually do this here?" so you follow the codebase's
+        house patterns instead of inventing new ones, and surfaces likely
+        duplication.
+
+        Arguments:
+        - target: a symbol (a dotted qualified name or file path that resolves
+          to indexed code) OR a raw code snippet. A resolved symbol uses its
+          stored embedding and is itself excluded from the results, so it finds
+          *other* similar code; an unresolved string is embedded as a snippet.
+        - limit: maximum number of ranked matches (default 10).
+
+        Returns one JSON object with:
+        - query: the target string, echoed back.
+        - results: matches ranked most-similar first, each {node, score} where
+          ``node`` carries node_id, kind, name, qualified_name, path,
+          start_line, end_line, language, and ``score`` is the cosine
+          similarity (higher is closer). Ties break by qualified_name then
+          node_id.
+
+        Returns an empty ``results`` list when the index carries no embeddings
+        or nothing matches.
+        """
+        store = CodeStore(settings=resolved)
+        try:
+            return store.find_similar(target, limit=limit).model_dump()
         finally:
             store.close()
 
