@@ -77,9 +77,9 @@ heading structure, and `report` surfaces the page/heading/tag counts. See the
 
 ## The CLI {#the-cli}
 
-The `duckdb-code` CLI exposes twelve verbs: `index`, `watch`, `search`,
-`find-similar`, `overview`, `related-tests`, `history`, `report`, `impact`,
-`explain`, `export`, and `mcp`. Every verb opens the store read-write
+The `duckdb-code` CLI exposes thirteen verbs: `index`, `watch`, `search`,
+`find-similar`, `overview`, `related-tests`, `history`, `links`, `report`,
+`impact`, `explain`, `export`, and `mcp`. Every verb opens the store read-write
 — incremental updates are the rule for this package. All honor the
 `DUCKDB_CODE_*` environment variables and the `--db` override, and `--json`
 emits machine-readable output.
@@ -114,8 +114,10 @@ and size exclusions while still honoring the ignore files.
 
 ## The MCP server {#the-mcp-server}
 
-`duckdb-code mcp` serves four tools to any MCP client — `impact`, `explain`,
-`report`, and `export` — with the same JSON-object shapes as the SDK.
+`duckdb-code mcp` serves ten tools to any MCP client — `search`,
+`find_similar`, `overview`, `related_tests`, `history`, `links`, `impact`,
+`explain`, `report`, and `export` — with the same JSON-object shapes as the
+SDK.
 `export` returns the whole graph as JSON: by default it writes the
 `{meta, nodes, edges}` document to a file (given `out`, or a temp path) and
 returns a small `{path, node_count, edge_count, meta}` summary rather than the

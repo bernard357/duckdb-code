@@ -32,6 +32,8 @@ from duckdb_code.models import (
     HistoryResult,
     ImpactNode,
     ImpactResult,
+    LinkEdge,
+    LinksResult,
     ModuleSummary,
     Node,
     Overview,
@@ -73,6 +75,20 @@ _DEPENDENCY_KINDS = (
     "references",
     "links_to",
     "embeds",
+)
+
+# The cross-boundary edge kinds the ``links`` tool surfaces — edges an LSP
+# never sees together. ``calls_route`` is the headline case (an HTTP client
+# call bound to its server route across languages/files); ``links_to``,
+# ``embeds``, and ``tagged`` are the Markdown page/tag boundary crossings. The
+# ordinary in-language ``references`` dependency and the derived ``member_of``
+# community edge are deliberately absent — neither crosses a boundary an LSP
+# cannot follow.
+_CROSS_BOUNDARY_KINDS = (
+    "calls_route",
+    "links_to",
+    "embeds",
+    "tagged",
 )
 
 # A target string is classified as a path (not a symbol) when it carries one of
@@ -632,6 +648,84 @@ class CodeStore:
             co_change=co_change,
             churn=churn,
         )
+
+    def links(self, target: str) -> LinksResult:
+        """Return the cross-boundary edges touching ``target`` — a symbol or path.
+
+        Resolves ``target`` the same way as ``impact``/``explain`` (exact
+        qualified name, then path, then best-effort suffix), then collects the
+        cross-boundary edges where any resolved node is the ``src`` OR the
+        ``dst`` — both directions, so asking from either endpoint of an HTTP
+        route↔client link surfaces it. The cross-boundary kinds are
+        :data:`_CROSS_BOUNDARY_KINDS` (``calls_route`` plus the Markdown
+        ``links_to``/``embeds``/``tagged``) — the edges an LSP never sees
+        together; ordinary in-language dependencies are excluded.
+
+        Each :class:`LinkEdge` carries the from/to symbol nodes, the edge kind,
+        the ``path``/``range`` of its source node (the origin to hand to an
+        LSP), and the stored ``resolution``/``confidence`` so a heuristic
+        binding is never presented as certain. Edges are distinct and ordered by
+        kind, then source path/line, then target path/line. Returns empty
+        ``resolved``/``links`` when the target matches nothing or carries no
+        cross-boundary edge — never raising.
+        """
+        target = target.strip()
+        if not target:
+            return LinksResult(symbol=target, resolved=[], links=[])
+        resolved, _ambiguous, _origin = self._resolve_target(target)
+        if not resolved:
+            return LinksResult(symbol=target, resolved=[], links=[])
+        resolved_sorted = sorted(resolved, key=self._order_key)
+        node_ids = {node.node_id for node in resolved}
+        links = self._cross_boundary_edges(node_ids)
+        return LinksResult(symbol=target, resolved=resolved_sorted, links=links)
+
+    def _cross_boundary_edges(self, node_ids: set[str]) -> list[LinkEdge]:
+        """Return the distinct cross-boundary edges touching any id in a set.
+
+        An edge qualifies when its kind is in :data:`_CROSS_BOUNDARY_KINDS` and
+        either endpoint is in ``node_ids``. Both endpoints are joined to
+        ``nodes`` so the from/to symbols are materialized; the result is ordered
+        by kind, source path/line, then target path/line for a stable order.
+        """
+        if not node_ids:
+            return []
+        ids = list(node_ids)
+        id_ph = ", ".join(["?"] * len(ids))
+        kind_ph = ", ".join(["?"] * len(_CROSS_BOUNDARY_KINDS))
+        rows = self._con.execute(
+            f"""
+            SELECT DISTINCT
+                e.kind, e.resolution, e.confidence,
+                {self._node_select("s")},
+                {self._node_select("d")}
+            FROM edges e
+            JOIN nodes s ON s.node_id = e.src_id
+            JOIN nodes d ON d.node_id = e.dst_id
+            WHERE e.kind IN ({kind_ph})
+              AND (e.src_id IN ({id_ph}) OR e.dst_id IN ({id_ph}))
+            ORDER BY e.kind, s.path, s.start_line, s.node_id,
+                     d.path, d.start_line, d.node_id
+            """,
+            [*_CROSS_BOUNDARY_KINDS, *ids, *ids],
+        ).fetchall()
+        links: list[LinkEdge] = []
+        for row in rows:
+            kind, resolution, confidence = row[0], row[1], row[2]
+            source = self._row_to_node(row[3:11])
+            to = self._row_to_node(row[11:19])
+            links.append(
+                LinkEdge(
+                    kind=kind,
+                    source=source,
+                    to=to,
+                    path=source.path,
+                    range=(source.start_line, source.end_line),
+                    resolution=resolution,
+                    confidence=confidence,
+                )
+            )
+        return links
 
     def _reverse_defines(self, dst_ids: set[str]) -> list[Node]:
         """Return the nodes that ``defines``-point at any id in ``dst_ids``."""

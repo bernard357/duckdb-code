@@ -187,8 +187,8 @@ follow:
 1. __MVP__ (most value for a small build): `search` (shipped), `overview`
    (shipped), `impact` (shipped, extended with per-module blast radius, entry
    points, and related tests), `related_tests` (shipped), `history` (shipped).
-2. __Differentiators__ (the gap nobody covers well): `links`, `find_similar`
-   (shipped).
+2. __Differentiators__ (the gap nobody covers well): `links` (shipped),
+   `find_similar` (shipped).
 3. __Remaining__: `analytics`, `context_for_change`, `index_status`, and
    folding `explain` / reshaping `report`.
 

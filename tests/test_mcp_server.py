@@ -43,7 +43,7 @@ def _result(db, name, args):
     return json.loads(outcome.content[0].text)
 
 
-def test_exactly_nine_tools_registered(indexed_db):
+def test_exactly_ten_tools_registered(indexed_db):
     server = _server(indexed_db)
     names = {tool.name for tool in asyncio.run(server.list_tools())}
     assert names == {
@@ -52,6 +52,7 @@ def test_exactly_nine_tools_registered(indexed_db):
         "overview",
         "related_tests",
         "history",
+        "links",
         "impact",
         "explain",
         "report",
@@ -73,6 +74,7 @@ def test_streamable_http_app_carries_the_tools(indexed_db):
         "overview",
         "related_tests",
         "history",
+        "links",
         "impact",
         "explain",
         "report",

@@ -1,11 +1,14 @@
 """Command-line interface for duckdb-code.
 
-Six verbs: ``index`` a folder of source code, ``report`` on database content,
-``impact`` the reverse-dependency set of a target, ``explain`` a target's
-structure, ``export`` the whole graph in the viewer's Cytoscape shape, and
-``mcp`` to serve the query tools over stdio. All honor the ``DUCKDB_CODE_*``
-environment variables and the ``--db`` override. Every verb opens the store
-read-write, since incremental updates are the rule for this package.
+Verbs: ``index`` (and ``watch``) a folder of source code, ``report`` on
+database content, ``search``/``find_similar`` the indexed symbols,
+``overview`` the repo map, ``related_tests`` for a target, ``history`` its git
+signals, ``links`` its cross-boundary edges, ``impact`` the reverse-dependency
+set of a target, ``explain`` a target's structure, ``export`` the whole graph
+in the viewer's Cytoscape shape, and ``mcp`` to serve the query tools over
+stdio. All honor the ``DUCKDB_CODE_*`` environment variables and the ``--db``
+override. Every verb opens the store read-write, since incremental updates are
+the rule for this package.
 """
 
 from pathlib import Path
@@ -357,6 +360,31 @@ def history(
         typer.echo(f"Co-change: {len(result.co_change)}")
         for partner in result.co_change:
             typer.echo(f"  {partner.together_count:4d}  {partner.path}")
+
+
+@app.command()
+def links(
+    target: str = typer.Argument(..., help="Symbol or file path."),
+    db: str | None = typer.Option(None, "--db", help="DuckDB file path."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON."),
+) -> None:
+    """Surface the cross-boundary edges of a symbol or file."""
+    store = CodeStore(db_path=db)
+    try:
+        result = store.links(target)
+    finally:
+        store.close()
+    if as_json:
+        typer.echo(result.model_dump_json(by_alias=True))
+    else:
+        typer.echo(f"Resolved : {len(result.resolved)} node(s)")
+        typer.echo(f"Links    : {len(result.links)}")
+        for link in result.links:
+            typer.echo(
+                f"  {link.resolution}  {link.kind}  "
+                f"{link.source.qualified_name} ({link.source.path})  ->  "
+                f"{link.to.qualified_name} ({link.to.path})"
+            )
 
 
 @app.command()

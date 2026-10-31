@@ -207,7 +207,7 @@ query", use the sibling
 
 ## MCP tool
 
-`duckdb-code mcp` is an MCP-over-stdio server exposing nine query tools:
+`duckdb-code mcp` is an MCP-over-stdio server exposing ten query tools:
 
 - `search(query, limit=…)` — ranked semantic search for symbols by intent, when
   you don't know the name.
@@ -217,6 +217,8 @@ query", use the sibling
   symbols, sized to a token budget.
 - `related_tests(target)` — the tests to run after editing a symbol or file.
 - `history(target)` — git signals: recent commits, co-change partners, churn.
+- `links(target)` — cross-boundary edges an LSP never sees together: HTTP
+  route↔client, Markdown links/embeds/tags.
 - `impact(target, …)` — transitive reverse-dependency set for a symbol or file.
 - `explain(target, …)` — structural neighbourhood of a symbol or file.
 - `report()` — introspects the index: database path, schema version, languages,
@@ -225,7 +227,7 @@ query", use the sibling
   JSON, writing it to a file and returning a summary by default (inline only for
   a small graph).
 
-These four are the first slice of a larger, LSP-complementary tool contract:
+These ten are the first slice of a larger, LSP-complementary tool contract:
 whole-repo, precomputed questions (intent search, one-call impact,
 cross-boundary links, history) that a Language Server structurally can't
 answer, while point queries (definition, references, hover, rename,

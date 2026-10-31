@@ -7,7 +7,7 @@ constants ``NODE_KINDS``, ``EDGE_KINDS``, and ``RESOLUTIONS`` below, validated
 at extraction time.
 """
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 NODE_KINDS = (
     "file",
@@ -338,6 +338,52 @@ class CoChangePartner(BaseModel):
 
     path: str
     together_count: int
+
+
+class LinkEdge(BaseModel):
+    """One cross-boundary edge in a :class:`LinksResult`.
+
+    A cross-boundary edge is one an LSP never sees together — the headline case
+    is an HTTP ``calls_route`` edge binding a client call to its server route
+    across languages; the Markdown ``links_to``/``embeds``/``tagged`` edges that
+    cross page/tag boundaries are the other populated kinds.
+
+    ``kind`` is the edge kind; ``source``/``to`` are the from/to symbols (the
+    edge's ``src``/``dst`` nodes). The contract spells the JSON keys ``from`` and
+    ``to``; ``from`` is a Python keyword, so the field is named ``source`` with
+    the serialization alias ``from`` (dump with ``by_alias=True`` to emit the
+    contract shape). ``path`` and ``range`` locate the edge's origin (the source
+    node's file and line span) so a consumer can hand a precise follow-up to the
+    LSP. ``resolution`` is the two-value projection of ``confidence`` (the
+    numeric source of truth), so a best-effort binding is never presented as
+    certain.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: str
+    source: Node = Field(serialization_alias="from")
+    to: Node
+    path: str
+    range: tuple[int, int]
+    resolution: str
+    confidence: float
+
+
+class LinksResult(BaseModel):
+    """The result of a ``links`` query: the cross-boundary edges of a symbol.
+
+    ``symbol`` is the query string, echoed back; ``resolved`` is the node(s) it
+    matched; ``links`` is the cross-boundary edges touching any resolved node in
+    either direction, ordered deterministically. Empty ``resolved``/``links``
+    when the target matches nothing or carries no cross-boundary edge (the
+    common case for ordinary in-language code). Dump with ``by_alias=True`` so
+    each edge's ``from`` field carries the contract key.
+    """
+
+    symbol: str
+    resolved: list[Node]
+    links: list[LinkEdge]
 
 
 class HistoryResult(BaseModel):

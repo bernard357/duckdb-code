@@ -1,9 +1,9 @@
 """MCP-over-stdio server exposing duckdb-code query tools.
 
 Any MCP client (Docker Agent, Claude Desktop, Claude Code, Cursor) can spawn
-``duckdb-code mcp`` as a subprocess and call the nine tools ``search``,
-``find_similar``, ``overview``, ``related_tests``, ``history``, ``impact``,
-``explain``, ``report``, and ``export``. The server also advertises a
+``duckdb-code mcp`` as a subprocess and call the ten tools ``search``,
+``find_similar``, ``overview``, ``related_tests``, ``history``, ``links``,
+``impact``, ``explain``, ``report``, and ``export``. The server also advertises a
 ``description`` and ``instructions`` so a client can route to it and pick a
 tool by intent. The server is built on the official ``mcp`` SDK.
 
@@ -85,6 +85,9 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             "file.\n"
             "- `history` — git signals around a symbol or file: recent commits, "
             "co-change partners, and churn.\n"
+            "- `links` — the cross-boundary edges of a symbol or file (HTTP "
+            "route↔client, Markdown links/embeds/tags) — links an LSP never "
+            "sees together.\n"
             "- `explain` — review the structure around a given symbol or file "
             "(what it defines, what it depends on, what depends on it).\n"
             "- `impact` — evaluate the implications of a change by finding "
@@ -258,6 +261,43 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         store = CodeStore(settings=resolved)
         try:
             return store.history(target).model_dump()
+        finally:
+            store.close()
+
+    @_described(server)
+    def links(target: str) -> dict:
+        """Use this to surface the cross-boundary edges of a symbol or file.
+
+        Returns the edges an LSP never sees together — the HTTP route↔client
+        bind across languages (``calls_route``) and the Markdown page/tag
+        crossings (``links_to``/``embeds``/``tagged``) — the kind of link where
+        an edit silently breaks something on the other side of a boundary.
+
+        Arguments:
+        - target: a dotted qualified name (e.g. ``pkg.module.Symbol``) or a file
+          path, resolved the same way as `impact`/`explain`. Either endpoint of
+          a cross-boundary link resolves it — asking from the client call or the
+          server route both surface the edge.
+
+        Returns one JSON object with:
+        - symbol: the target string, echoed back.
+        - resolved: the node(s) the target matched (empty when nothing matched).
+        - links: the cross-boundary edges touching any resolved node, in either
+          direction, each {kind, from, to, path, range, resolution, confidence}
+          where ``from``/``to`` are the edge's source/target symbol nodes (each
+          carrying node_id, kind, name, qualified_name, path, start_line,
+          end_line, language), ``path``/``range`` locate the edge's source node,
+          and ``resolution`` ("exact" or "best_effort") is the two-value
+          projection of the numeric ``confidence`` so a heuristic bind is never
+          shown as certain.
+
+        Returns empty ``resolved``/``links`` when the target matches nothing or
+        carries no cross-boundary edge (the common case for ordinary in-language
+        code).
+        """
+        store = CodeStore(settings=resolved)
+        try:
+            return store.links(target).model_dump(by_alias=True)
         finally:
             store.close()
 

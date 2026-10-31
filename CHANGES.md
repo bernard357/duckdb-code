@@ -8,6 +8,19 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
 
 ### Added
 
+- __`links` tool and CLI verb.__ Surfaces the cross-boundary edges of a symbol
+  or file — the links an LSP never sees together. The headline case is the
+  HTTP `calls_route` bind from a client call to its server route across
+  languages; the Markdown `links_to` / `embeds` / `tagged` page and tag
+  crossings are the other populated kinds. Resolves the target the same way as
+  `impact`/`explain`, then collects the qualifying edges in both directions,
+  each returned as `{kind, from, to, path, range, resolution, confidence}` so a
+  best-effort bind is never presented as certain. Ordinary in-language
+  `references` and the derived `member_of` community edges are excluded —
+  neither crosses a boundary. Exposed as `store.links(target)`, the
+  `duckdb-code links` CLI verb, and the tenth MCP tool; the JSON key `from`
+  follows the contract (dumped with `by_alias=True`). Read-only over the
+  existing edges (schema unchanged at v5).
 - __Cross-boundary HTTP route edges (limited frameworks).__ The indexer now
   extracts server routes and client calls across languages and links them: a
   `route` node per server route (Python Flask/FastAPI decorators `@app.get` /
