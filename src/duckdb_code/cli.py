@@ -223,6 +223,18 @@ def impact(
                 f"  {item.distance}  {item.resolution}  {item.node.kind}  "
                 f"{item.node.qualified_name}  {item.node.path}"
             )
+        if result.affected_by_module:
+            typer.echo("By module     :")
+            for path, count in result.affected_by_module.items():
+                typer.echo(f"  {count:4d}  {path}")
+        if result.affected_entry_points:
+            typer.echo(f"Entry points  : {len(result.affected_entry_points)}")
+            for node in result.affected_entry_points:
+                typer.echo(f"  {node.kind}  {node.qualified_name}  {node.path}")
+        if result.related_tests:
+            typer.echo(f"Related tests : {len(result.related_tests)}")
+            for node in result.related_tests:
+                typer.echo(f"  {node.qualified_name}  {node.path}")
 
 
 @app.command()

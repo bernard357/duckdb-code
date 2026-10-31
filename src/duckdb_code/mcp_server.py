@@ -226,6 +226,12 @@ def build_server(settings: Settings | None = None) -> MCPServer:
           a suffix-matched seed or a best-effort edge). exact wins an
           equal-distance tie.
         - affected_files: the sorted distinct paths of the affected nodes.
+        - affected_by_module: a map of module path -> count of affected nodes in
+          it (most affected first), the blast radius per module at a glance.
+        - affected_entry_points: the affected nodes that are dependency-graph
+          roots (nothing depends on them) — the outermost reach of the change.
+        - related_tests: the test symbols that exercise any affected or seed
+          symbol (via a `tests` edge) — what to run after the change.
 
         An unresolved target returns empty ``resolved`` and ``affected``.
         """

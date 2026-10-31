@@ -460,3 +460,23 @@ def test_overview_budget_scales_and_floors(tmp_path):
     small = store.overview(budget=1)
     assert len(small.central_symbols) >= 1
     store.close()
+
+
+def test_impact_aggregates_by_module_and_entry_points(tmp_path):
+    store = _indexed(tmp_path)
+    result = store.impact("payments.charge.Base")
+    assert result.affected  # Base has dependents in the fixture
+    # affected_by_module sums to the number of affected nodes, counts by path.
+    assert sum(result.affected_by_module.values()) == len(result.affected)
+    assert set(result.affected_by_module) == {n.node.path for n in result.affected}
+    # Counts are descending (most-affected module first).
+    counts = list(result.affected_by_module.values())
+    assert counts == sorted(counts, reverse=True)
+    # Entry points, when present, are a subset of the affected nodes and are
+    # dependency-graph roots.
+    affected_ids = {item.node.node_id for item in result.affected}
+    for node in result.affected_entry_points:
+        assert node.node_id in affected_ids
+    # The sample fixture has no test files, so related_tests is empty.
+    assert result.related_tests == []
+    store.close()

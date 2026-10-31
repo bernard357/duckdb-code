@@ -85,6 +85,9 @@ def test_impact_tool_returns_one_impact_result(indexed_db):
         "ambiguous",
         "affected",
         "affected_files",
+        "affected_by_module",
+        "affected_entry_points",
+        "related_tests",
     }
     affected_qns = {item["node"]["qualified_name"] for item in payload["affected"]}
     assert "payments.charge.Charge" in affected_qns

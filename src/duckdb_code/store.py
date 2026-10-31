@@ -430,13 +430,80 @@ class CodeStore:
         ]
         affected_files = sorted({node.path for node in affected_nodes})
         resolved_sorted = sorted(resolved, key=self._order_key)
+
+        # Blast radius per module: count affected nodes by their path, most
+        # affected first (ties by path for a stable order).
+        counts: dict[str, int] = {}
+        for node in affected_nodes:
+            counts[node.path] = counts.get(node.path, 0) + 1
+        affected_by_module = dict(
+            sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        )
+        # The affected nodes that are dependency-graph roots (nothing depends on
+        # them) — the outermost reach of the change.
+        affected_entry_points = self._entry_points_among(affected_ids)
+        # Tests that exercise any affected OR seed symbol (what to run after the
+        # change): the sources of `tests` edges into that id set.
+        related_tests = self._tests_reaching(affected_ids | seed_ids)
+
         return ImpactResult(
             target=target,
             resolved=resolved_sorted,
             ambiguous=ambiguous,
             affected=affected,
             affected_files=affected_files,
+            affected_by_module=affected_by_module,
+            affected_entry_points=affected_entry_points,
+            related_tests=related_tests,
         )
+
+    def _entry_points_among(self, node_ids: set[str]) -> list[Node]:
+        """Return the nodes in ``node_ids`` with zero inbound dependency edges.
+
+        An entry point is a dependency-graph root — nothing imports, calls,
+        inherits, or references it. Ordered by path/line for stability.
+        """
+        if not node_ids:
+            return []
+        ids = list(node_ids)
+        id_ph = ", ".join(["?"] * len(ids))
+        dep = ", ".join(["?"] * len(_DEPENDENCY_KINDS))
+        rows = self._con.execute(
+            f"""
+            SELECT {self._node_select("n")}
+            FROM nodes n
+            WHERE n.node_id IN ({id_ph})
+              AND NOT EXISTS (
+                  SELECT 1 FROM edges e
+                  WHERE e.dst_id = n.node_id AND e.kind IN ({dep})
+              )
+            ORDER BY n.path, n.start_line, n.node_id
+            """,
+            [*ids, *_DEPENDENCY_KINDS],
+        ).fetchall()
+        return [self._row_to_node(row) for row in rows]
+
+    def _tests_reaching(self, node_ids: set[str]) -> list[Node]:
+        """Return the test symbols with a ``tests`` edge into ``node_ids``.
+
+        These are the tests to run after a change touching that id set — the
+        sources of ``tests`` edges whose target is affected or a seed. Distinct,
+        ordered by path/line.
+        """
+        if not node_ids:
+            return []
+        ids = list(node_ids)
+        id_ph = ", ".join(["?"] * len(ids))
+        rows = self._con.execute(
+            f"""
+            SELECT DISTINCT {self._node_select("n")}
+            FROM edges e JOIN nodes n ON n.node_id = e.src_id
+            WHERE e.kind = 'tests' AND e.dst_id IN ({id_ph})
+            ORDER BY n.path, n.start_line, n.node_id
+            """,
+            ids,
+        ).fetchall()
+        return [self._row_to_node(row) for row in rows]
 
     def _reverse_defines(self, dst_ids: set[str]) -> list[Node]:
         """Return the nodes that ``defines``-point at any id in ``dst_ids``."""

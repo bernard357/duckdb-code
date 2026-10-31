@@ -121,8 +121,15 @@ def test_impact_result_defaults_and_fields():
         "ambiguous",
         "affected",
         "affected_files",
+        "affected_by_module",
+        "affected_entry_points",
+        "related_tests",
     }
     assert result.ambiguous is False
+    # The new aggregation fields default to empty.
+    assert result.affected_by_module == {}
+    assert result.affected_entry_points == []
+    assert result.related_tests == []
 
 
 def test_explanation_fields():

@@ -45,6 +45,13 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
 
 ### Changed
 
+- __`impact` returns the one-call blast radius.__ In addition to the affected
+  set, the `impact` tool/CLI/SDK result now carries `affected_by_module` (the
+  blast radius per module), `affected_entry_points` (the affected
+  dependency-graph roots), and `related_tests` (the tests that exercise any
+  affected or seed symbol, via `tests` edges) — so a change's scope and the
+  tests to run come back in one call. Additive: the existing fields are
+  unchanged.
 - __Numeric per-edge `confidence` (schema v2).__ Call resolution now assigns a
   numeric confidence (0.0–1.0) per strategy — import map 0.95, same-module
   0.90, suffix 0.55, exact/`defines` 1.0 — stored on `edges.confidence` as the

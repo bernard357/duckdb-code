@@ -114,7 +114,13 @@ class ImpactResult(BaseModel):
     ``resolved`` is the node(s) the ``target`` string resolved to. ``ambiguous``
     is ``True`` when a symbol target matched more than one qualified name.
     ``affected`` is deterministically ordered; ``affected_files`` lists the
-    distinct paths of affected nodes, sorted.
+    distinct paths of affected nodes, sorted. ``affected_by_module`` aggregates
+    the affected nodes by their module path (path -> count, descending), so a
+    caller sees the blast radius per module without walking ``affected``.
+    ``affected_entry_points`` are the affected nodes that are dependency-graph
+    roots (nothing depends on them) — the outermost things a change reaches.
+    ``related_tests`` are the test symbols that exercise any affected (or seed)
+    symbol via a ``tests`` edge — what to run after the change.
     """
 
     target: str
@@ -122,6 +128,9 @@ class ImpactResult(BaseModel):
     ambiguous: bool = False
     affected: list[ImpactNode]
     affected_files: list[str]
+    affected_by_module: dict[str, int] = {}
+    affected_entry_points: list[Node] = []
+    related_tests: list[Node] = []
 
 
 class Explanation(BaseModel):
