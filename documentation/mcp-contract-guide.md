@@ -184,8 +184,8 @@ strategy](indexing-strategy-workbook.md) element it reads. `search` and
 `find_similar` have shipped (both ranked over the `vectors` table); the rest
 follow:
 
-1. __MVP__ (most value for a small build): `search` (shipped), `overview`,
-   `impact`, `related_tests`, `history`.
+1. __MVP__ (most value for a small build): `search` (shipped), `overview`
+   (shipped), `impact`, `related_tests`, `history`.
 2. __Differentiators__ (the gap nobody covers well): `links`, `find_similar`
    (shipped).
 3. __Remaining__: `analytics`, `context_for_change`, `index_status`, and

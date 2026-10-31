@@ -8,6 +8,12 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
 
 ### Added
 
+- __`overview` tool and CLI verb.__ The repo map an agent reads to orient
+  before touching anything: the indexed modules (most symbol-rich first), the
+  entry points (symbols nothing depends on — dependency-graph roots), and the
+  most central symbols by index-time centrality, each section sized to a token
+  `budget`. Exposed as `CodeStore.overview(budget)`, the `overview` MCP tool,
+  and `duckdb-code overview`.
 - __`find_similar` tool and CLI verb.__ Finds code built like a given symbol or
   snippet — "how do we usually do this here?" and duplication detection. A
   resolved symbol uses its stored embedding (and is excluded from its own

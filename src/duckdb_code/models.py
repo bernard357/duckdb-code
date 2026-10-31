@@ -240,3 +240,33 @@ class SearchResult(BaseModel):
 
     query: str
     results: list[SearchHit]
+
+
+class ModuleSummary(BaseModel):
+    """One module in an :class:`Overview`: its node plus how much it holds."""
+
+    node: Node
+    symbol_count: int
+
+
+class RankedSymbol(BaseModel):
+    """A symbol ranked by centrality in an :class:`Overview`."""
+
+    node: Node
+    rank: float
+
+
+class Overview(BaseModel):
+    """The repo map an agent reads to orient before touching anything.
+
+    ``modules`` are the indexed modules (most symbol-rich first); ``entry_points``
+    are symbols nothing depends on (dependency-graph roots — CLI commands,
+    top-level handlers, ``main``); ``central_symbols`` are the most depended-upon
+    symbols by index-time centrality. ``budget`` is the token budget the caller
+    passed; each section is capped to a share of it so the whole map fits.
+    """
+
+    modules: list[ModuleSummary]
+    entry_points: list[Node]
+    central_symbols: list[RankedSymbol]
+    budget: int

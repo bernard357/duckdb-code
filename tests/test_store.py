@@ -432,3 +432,31 @@ def test_store_incremental_keeps_impact_correct_after_edit(tmp_path):
     assert "payments.premium.Premium" in affected
     assert "payments.billing.bill" in affected
     store.close()
+
+
+def test_overview_maps_modules_entry_points_and_central(tmp_path):
+    store = _indexed(tmp_path)
+    result = store.overview(budget=2000)
+    assert result.budget == 2000
+    # Modules present, most symbol-rich first.
+    assert result.modules
+    counts = [m.symbol_count for m in result.modules]
+    assert counts == sorted(counts, reverse=True)
+    assert all(m.node.kind in ("module", "page") for m in result.modules)
+    # Entry points are symbols nothing depends on.
+    assert all(n.kind in ("function", "class") for n in result.entry_points)
+    # Central symbols ranked by centrality, descending.
+    assert result.central_symbols
+    ranks = [s.rank for s in result.central_symbols]
+    assert ranks == sorted(ranks, reverse=True)
+    store.close()
+
+
+def test_overview_budget_scales_and_floors(tmp_path):
+    store = _indexed(tmp_path)
+    assert store.overview(budget=0).modules == []
+    assert store.overview(budget=0).central_symbols == []
+    # A tiny positive budget still returns a floored handful.
+    small = store.overview(budget=1)
+    assert len(small.central_symbols) >= 1
+    store.close()

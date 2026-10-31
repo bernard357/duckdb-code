@@ -276,6 +276,32 @@ def find_similar(
 
 
 @app.command()
+def overview(
+    db: str | None = typer.Option(None, "--db", help="DuckDB file path."),
+    budget: int = typer.Option(2000, "--budget", help="Rough token budget."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON."),
+) -> None:
+    """Map the repo: modules, entry points, and most central symbols."""
+    store = CodeStore(db_path=db)
+    try:
+        result = store.overview(budget=budget)
+    finally:
+        store.close()
+    if as_json:
+        typer.echo(result.model_dump_json())
+    else:
+        typer.echo(f"Modules       : {len(result.modules)}")
+        for module in result.modules:
+            typer.echo(f"  {module.symbol_count:4d}  {module.node.qualified_name}")
+        typer.echo(f"Entry points  : {len(result.entry_points)}")
+        for node in result.entry_points:
+            typer.echo(f"  {node.kind}  {node.qualified_name}  {node.path}")
+        typer.echo(f"Central       : {len(result.central_symbols)}")
+        for sym in result.central_symbols:
+            typer.echo(f"  {sym.rank:.4f}  {sym.node.kind}  {sym.node.qualified_name}")
+
+
+@app.command()
 def explain(
     target: str = typer.Argument(..., help="Symbol or file path."),
     db: str | None = typer.Option(None, "--db", help="DuckDB file path."),

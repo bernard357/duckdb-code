@@ -1,9 +1,9 @@
 """MCP-over-stdio server exposing duckdb-code query tools.
 
 Any MCP client (Docker Agent, Claude Desktop, Claude Code, Cursor) can spawn
-``duckdb-code mcp`` as a subprocess and call the six tools ``search``,
-``find_similar``, ``impact``, ``explain``, ``report``, and ``export``. The
-server also advertises a
+``duckdb-code mcp`` as a subprocess and call the seven tools ``search``,
+``find_similar``, ``overview``, ``impact``, ``explain``, ``report``, and
+``export``. The server also advertises a
 ``description`` and ``instructions`` so a client can route to it and pick a
 tool by intent. The server is built on the official ``mcp`` SDK.
 
@@ -79,6 +79,8 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             "(ranked semantic search); the first tool to reach for.\n"
             "- `find_similar` — find code built like a given symbol or snippet "
             "(house patterns, duplication).\n"
+            "- `overview` — orient in the codebase: its modules, entry points, "
+            "and most central symbols, sized to a budget.\n"
             "- `explain` — review the structure around a given symbol or file "
             "(what it defines, what it depends on, what depends on it).\n"
             "- `impact` — evaluate the implications of a change by finding "
@@ -158,6 +160,37 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         store = CodeStore(settings=resolved)
         try:
             return store.find_similar(target, limit=limit).model_dump()
+        finally:
+            store.close()
+
+    @_described(server)
+    def overview(budget: int = 2000) -> dict:
+        """Use this to orient in a codebase before touching anything.
+
+        Returns a repo map — the modules, the entry points, and the most
+        central symbols — ranked and sized to a token budget, so an agent sees
+        the shape of the whole codebase in one call instead of reading files.
+
+        Arguments:
+        - budget: a rough token budget (default 2000); each section is capped to
+          a share of it, floored so a small budget still returns a few of each.
+
+        Returns one JSON object with:
+        - modules: indexed modules/pages, most symbol-rich first, each
+          {node, symbol_count}.
+        - entry_points: symbols nothing depends on — dependency-graph roots like
+          CLI commands, handlers, or ``main`` — most central first; each a node.
+        - central_symbols: the most depended-upon symbols by index-time
+          centrality, each {node, rank}.
+        - budget: the budget echoed back.
+
+        Every node carries node_id, kind, name, qualified_name, path,
+        start_line, end_line, language, so you can follow up with `explain`,
+        `impact`, or the source.
+        """
+        store = CodeStore(settings=resolved)
+        try:
+            return store.overview(budget=budget).model_dump()
         finally:
             store.close()
 

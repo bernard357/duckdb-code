@@ -29,7 +29,10 @@ from duckdb_code.models import (
     ExplanationResult,
     ImpactNode,
     ImpactResult,
+    ModuleSummary,
     Node,
+    Overview,
+    RankedSymbol,
     Report,
     SearchHit,
     SearchResult,
@@ -655,6 +658,93 @@ class CodeStore:
             roots=roots,
             branch=meta.get("branch"),
             head_commit=meta.get("head_commit"),
+        )
+
+    # Dependency edge kinds that define "something depends on this" — the same
+    # set the analytics phase ranks over. An entry point has zero inbound edges
+    # of these kinds (nothing calls/imports/inherits/references it).
+    _OVERVIEW_DEP_KINDS = ("imports", "calls", "inherits", "references")
+
+    def overview(self, budget: int = 2000) -> Overview:
+        """Return the repo map an agent reads to orient before touching code.
+
+        Three ranked sections, each capped to a share of ``budget`` (a rough
+        token budget, translated to item counts) so the whole map fits a
+        context window:
+
+        - ``modules`` — indexed ``module``/``page`` nodes, most symbol-rich
+          first (symbol count = nodes sharing the module's path).
+        - ``entry_points`` — ``function``/``class`` symbols with zero inbound
+          dependency edges (dependency-graph roots: CLI commands, handlers,
+          ``main``), most central first among those.
+        - ``central_symbols`` — the most depended-upon symbols by the index-time
+          ``centrality`` rank.
+
+        A non-positive ``budget`` yields empty sections. The counts scale with
+        the budget but are floored so a small budget still returns a few of
+        each, and capped so a huge budget does not dump the whole graph.
+        """
+        if budget <= 0:
+            return Overview(
+                modules=[], entry_points=[], central_symbols=[], budget=budget
+            )
+        # ~80 tokens per listed item, split across the three sections; floor 5,
+        # cap 50 per section so the map is useful at any budget.
+        per_section = max(5, min(50, budget // (80 * 3)))
+
+        module_rows = self._con.execute(
+            f"""
+            SELECT {self._node_select("n")},
+                   (SELECT COUNT(*) FROM nodes m WHERE m.path = n.path) AS symbols
+            FROM nodes n
+            WHERE n.kind IN ('module', 'page')
+            ORDER BY symbols DESC, n.qualified_name, n.node_id
+            LIMIT ?
+            """,
+            [per_section],
+        ).fetchall()
+        modules = [
+            ModuleSummary(node=self._row_to_node(row[:-1]), symbol_count=row[-1])
+            for row in module_rows
+        ]
+
+        dep = ", ".join(["?"] * len(self._OVERVIEW_DEP_KINDS))
+        entry_rows = self._con.execute(
+            f"""
+            SELECT {self._node_select("n")}
+            FROM nodes n
+            WHERE n.kind IN ('function', 'class')
+              AND NOT EXISTS (
+                  SELECT 1 FROM edges e
+                  WHERE e.dst_id = n.node_id AND e.kind IN ({dep})
+              )
+            ORDER BY n.centrality DESC, n.qualified_name, n.node_id
+            LIMIT ?
+            """,
+            [*self._OVERVIEW_DEP_KINDS, per_section],
+        ).fetchall()
+        entry_points = [self._row_to_node(row) for row in entry_rows]
+
+        central_rows = self._con.execute(
+            f"""
+            SELECT {self._node_select("n")}, n.centrality AS rank
+            FROM nodes n
+            WHERE n.kind IN ('function', 'class', 'module')
+            ORDER BY rank DESC, n.qualified_name, n.node_id
+            LIMIT ?
+            """,
+            [per_section],
+        ).fetchall()
+        central_symbols = [
+            RankedSymbol(node=self._row_to_node(row[:-1]), rank=row[-1])
+            for row in central_rows
+        ]
+
+        return Overview(
+            modules=modules,
+            entry_points=entry_points,
+            central_symbols=central_symbols,
+            budget=budget,
         )
 
     def search(self, query: str, *, limit: int = 10) -> SearchResult:
