@@ -8,6 +8,17 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
 
 ### Added
 
+- __`context_for_change` tool and CLI verb.__ The review/PR primitive: the
+  symbols a change touches plus their one-hop dependency neighbourhood. `base`
+  selects the diff — omitted diffs the working tree against `HEAD` (uncommitted
+  work), a branch/ref name diffs `HEAD` against it. Changed line ranges (parsed
+  from `git diff --unified=0` hunk headers, rebased onto the indexed subtree)
+  are mapped onto the nodes whose line span overlaps; each neighbour is tagged
+  `<kind>:out` (the change depends on it) or `<kind>:in` (it depends on the
+  change). Reads git at query time against `meta.root`, degrading to empty
+  `changed`/`neighbourhood` when git is unavailable, the root is not a repo, or
+  the diff touches nothing indexed. Exposed as `CodeStore.context_for_change()`,
+  the `context_for_change` MCP tool, and `duckdb-code context-for-change`.
 - __`analytics` tool and CLI verb.__ Whole-repo structural views for planning
   and review, all read from existing index data (no git, no re-parse):
   `cycles` (dependency strongly-connected components over
@@ -27,6 +38,17 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
   node/edge counts. Exposed as `CodeStore.index_status()`, the `index_status`
   MCP tool, and `duckdb-code index-status`. Reshapes the freshness half of
   `report`. The MCP surface is now twelve tools.
+
+### Changed
+
+- __`explain` folded off the MCP surface.__ `explain` is no longer advertised as
+  an MCP tool — its structural neighbourhood is covered by `overview` /
+  `context_for_change` and the per-symbol detail the other tools return. It
+  remains on the SDK (`CodeStore.explain`) and the `duckdb-code explain` CLI
+  verb. The MCP surface stays twelve tools (`explain` out, `context_for_change`
+  in).
+
+### Added (earlier this cycle)
 
 - __`links` tool and CLI verb.__ Surfaces the cross-boundary edges of a symbol
   or file — the links an LSP never sees together. The headline case is the

@@ -5,9 +5,10 @@ database content, ``search``/``find_similar`` the indexed symbols,
 ``overview`` the repo map, ``related_tests`` for a target, ``history`` its git
 signals, ``links`` its cross-boundary edges, ``impact`` the reverse-dependency
 set of a target, ``explain`` a target's structure, ``analytics`` a whole-repo
-structural view, ``index-status`` the index freshness, ``export`` the whole
-graph in the viewer's Cytoscape shape, and ``mcp`` to serve the query tools
-over stdio. All honor the ``DUCKDB_CODE_*`` environment variables and the ``--db``
+structural view, ``index-status`` the index freshness, ``context-for-change``
+a diff's symbols and neighbourhood, ``export`` the whole graph in the viewer's
+Cytoscape shape, and ``mcp`` to serve the query tools over stdio. All honor the
+``DUCKDB_CODE_*`` environment variables and the ``--db``
 override. Every verb opens the store read-write, since incremental updates are
 the rule for this package.
 """
@@ -501,6 +502,37 @@ def index_status(
     typer.echo(f"Working tree  : {dirty}")
     typer.echo(f"Indexed at    : {result.indexed_at or '(unknown)'}")
     typer.echo(f"Nodes / edges : {result.node_count} / {result.edge_count}")
+
+
+@app.command("context-for-change")
+def context_for_change(
+    base: str | None = typer.Option(
+        None,
+        "--base",
+        help="Ref to diff HEAD against (default: working tree vs HEAD).",
+    ),
+    db: str | None = typer.Option(None, "--db", help="DuckDB file path."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON."),
+) -> None:
+    """Symbols a change touches plus their one-hop graph neighbourhood."""
+    store = CodeStore(db_path=db)
+    try:
+        result = store.context_for_change(base)
+    finally:
+        store.close()
+    if as_json:
+        typer.echo(result.model_dump_json())
+        return
+    typer.echo(f"Base          : {result.base}")
+    typer.echo(f"Changed ({len(result.changed)}):")
+    for item in result.changed:
+        typer.echo(f"  {item.node.qualified_name} ({item.node.path})")
+    typer.echo(f"Neighbourhood ({len(result.neighbourhood)}):")
+    for neighbour in result.neighbourhood:
+        typer.echo(
+            f"  {neighbour.relation}  {neighbour.node.qualified_name} "
+            f"({neighbour.node.path})"
+        )
 
 
 @app.command()

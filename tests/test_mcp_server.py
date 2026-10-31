@@ -54,12 +54,15 @@ def test_exactly_twelve_tools_registered(indexed_db):
         "history",
         "links",
         "impact",
-        "explain",
         "report",
         "export",
         "analytics",
         "index_status",
+        "context_for_change",
     }
+    # explain is intentionally not advertised over MCP (folded); it stays on
+    # the SDK and CLI.
+    assert "explain" not in names
 
 
 def test_streamable_http_app_carries_the_tools(indexed_db):
@@ -78,11 +81,11 @@ def test_streamable_http_app_carries_the_tools(indexed_db):
         "history",
         "links",
         "impact",
-        "explain",
         "report",
         "export",
         "analytics",
         "index_status",
+        "context_for_change",
     }
 
 
@@ -103,13 +106,17 @@ def test_impact_tool_returns_one_impact_result(indexed_db):
     assert "payments.charge.Charge" in affected_qns
 
 
-def test_explain_tool_returns_one_explanation_result(indexed_db):
-    payload = _result(indexed_db, "explain", {"target": "payments.charge.Charge"})
-    assert isinstance(payload, dict)
-    # A single ExplanationResult wrapper, never a bare Explanation / a list.
-    assert set(payload) == {"target", "resolved", "ambiguous", "explanations"}
-    assert len(payload["explanations"]) == 1
-    assert [n["name"] for n in payload["explanations"][0]["defines"]] == ["run"]
+def test_explain_is_not_advertised_over_mcp(indexed_db):
+    # explain is folded: no longer an MCP tool (its neighbourhood is covered by
+    # overview/context_for_change), though it stays on the SDK and CLI. Calling
+    # it over MCP fails rather than returning a result.
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    server = _server(indexed_db)
+    names = {tool.name for tool in asyncio.run(server.list_tools())}
+    assert "explain" not in names
+    with pytest.raises(ToolError):
+        asyncio.run(server.call_tool("explain", {"target": "payments.charge.Charge"}))
 
 
 def test_report_tool_returns_one_report(indexed_db):
@@ -242,3 +249,14 @@ def test_index_status_tool_returns_one_status(indexed_db):
         "edge_count",
     }
     assert payload["node_count"] > 0
+
+
+def test_context_for_change_tool_returns_the_contract_shape(indexed_db):
+    # The sample fixture is not a git repo, so the diff degrades to empty — but
+    # the tool still returns the well-formed {base, changed, neighbourhood}.
+    payload = _result(indexed_db, "context_for_change", {})
+    assert isinstance(payload, dict)
+    assert set(payload) == {"base", "changed", "neighbourhood"}
+    assert payload["base"] == "working-tree"
+    assert payload["changed"] == []
+    assert payload["neighbourhood"] == []

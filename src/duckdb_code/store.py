@@ -25,11 +25,13 @@ from duckdb_code.extractors.registry import EXTENSION_LANGUAGE
 from duckdb_code.models import (
     AnalyticsItem,
     AnalyticsResult,
+    ChangedSymbol,
     CoChangePartner,
     CodeExport,
     CodeExportEdge,
     CodeExportNode,
     CommitInfo,
+    ContextForChange,
     Explanation,
     ExplanationResult,
     HistoryResult,
@@ -39,6 +41,7 @@ from duckdb_code.models import (
     LinkEdge,
     LinksResult,
     ModuleSummary,
+    NeighbourSymbol,
     Node,
     Overview,
     RankedSymbol,
@@ -206,6 +209,104 @@ def _working_tree_dirty(root: str) -> bool | None:
     if proc.returncode != 0:
         return None
     return bool(proc.stdout.strip())
+
+
+def _git_changed_ranges(
+    root: str, base: str | None
+) -> dict[str, list[tuple[int, int]]]:
+    """Return changed line ranges per index-relative path, from a git diff.
+
+    ``base=None`` diffs the working tree against ``HEAD`` (uncommitted work); a
+    ref name diffs ``HEAD`` against that ref. Runs ``git diff --unified=0`` and
+    parses each hunk header (``@@ -old +new,count @@``) for the touched line
+    span on the new side; ``git diff`` is run with ``-C root`` so paths are
+    repo-root-relative, then rebased onto the indexed subtree via
+    ``--show-prefix`` so they match stored ``nodes.path``. Returns ``{}`` when
+    git is unavailable, the root is not a repo, or git errors — the caller then
+    reports no changed symbols.
+    """
+    args = ["git", "-C", root, "diff", "--unified=0", "--no-color", "--no-renames"]
+    if base:
+        args.append(base)
+    try:
+        proc = subprocess.run(
+            args, capture_output=True, text=True, timeout=30, check=False
+        )
+    except (OSError, subprocess.SubprocessError):  # pragma: no cover
+        return {}
+    if proc.returncode != 0:
+        return {}
+    prefix = _git_show_prefix(root)
+    ranges: dict[str, list[tuple[int, int]]] = {}
+    current: str | None = None
+    for line in proc.stdout.splitlines():
+        if line.startswith("+++ "):
+            target = line[4:].strip()
+            if target == "/dev/null":
+                current = None
+                continue
+            # Strip the "b/" diff prefix, then rebase onto the indexed subtree.
+            rel = target[2:] if target.startswith("b/") else target
+            if prefix and rel.startswith(prefix):
+                rel = rel[len(prefix) :]
+            elif prefix:
+                current = None  # outside the indexed subtree
+                continue
+            current = rel
+            continue
+        if line.startswith("@@") and current is not None:
+            span = _parse_hunk_new_span(line)
+            if span is not None:
+                ranges.setdefault(current, []).append(span)
+    return ranges
+
+
+def _parse_hunk_new_span(header: str) -> tuple[int, int] | None:
+    """Parse ``@@ -a,b +c,d @@`` -> the new-side ``(start, end)`` line span.
+
+    ``+c`` without a count is a single line (count 1); ``+c,0`` is a pure
+    deletion at ``c`` (reported as the single line ``c`` so an adjacent symbol
+    still surfaces). Returns ``None`` when the header does not parse.
+    """
+    plus = header.find("+")
+    if plus == -1:
+        return None
+    token = header[plus + 1 :].split(" ", 1)[0].split("@@", 1)[0].strip()
+    start_str, _, count_str = token.partition(",")
+    try:
+        start = int(start_str)
+    except ValueError:
+        return None
+    count = 1
+    if count_str:
+        try:
+            count = int(count_str)
+        except ValueError:
+            count = 1
+    if count <= 0:
+        return (start, start)
+    return (start, start + count - 1)
+
+
+def _git_show_prefix(root: str) -> str:
+    """Return ``root``'s path relative to its git repo root (POSIX, trailing /).
+
+    Empty when ``root`` IS the repo root, or on any git error (so no rebasing
+    is attempted). Mirrors the indexer's co-change rebasing.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "-C", root, "rev-parse", "--show-prefix"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):  # pragma: no cover
+        return ""
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout.strip()
 
 
 # A target string is classified as a path (not a symbol) when it carries one of
@@ -1279,6 +1380,120 @@ class CodeStore:
             node_count=node_count,
             edge_count=edge_count,
         )
+
+    def context_for_change(self, base: str | None = None) -> ContextForChange:
+        """Return the symbols a change touches plus their direct neighbours.
+
+        The review/PR primitive: ``base`` selects what the diff is measured
+        against — ``None`` (the default) diffs the working tree against ``HEAD``
+        (uncommitted work), and a branch/ref name diffs ``HEAD`` against that
+        ref (a feature branch's changes). The diff's changed line ranges per
+        file are mapped onto the nodes whose ``[start_line, end_line]`` overlap
+        — the ``changed`` symbols — and their one-hop dependency neighbours (in
+        both directions, each tagged with its ``relation``) form the
+        ``neighbourhood``.
+
+        Reads git at query time against ``meta.root`` with a bounded
+        ``git diff``; it degrades to empty ``changed``/``neighbourhood`` (never
+        raises) when git is unavailable, the root is not a repo, or the diff
+        touches nothing in the index. The resolved ``base`` is echoed back as
+        ``"working-tree"`` or the ref name.
+        """
+        root = (
+            dict(self._con.execute("SELECT key, value FROM meta").fetchall()).get(
+                "root"
+            )
+            or self.settings.root
+        )
+        label = base if base else "working-tree"
+        if not root:
+            return ContextForChange(base=label, changed=[], neighbourhood=[])
+        ranges = _git_changed_ranges(root, base)
+        changed = self._nodes_overlapping(ranges)
+        changed_ids = {node.node_id for node in changed}
+        neighbourhood = self._one_hop_neighbourhood(changed_ids)
+        return ContextForChange(
+            base=label,
+            changed=[ChangedSymbol(node=node) for node in changed],
+            neighbourhood=neighbourhood,
+        )
+
+    def _nodes_overlapping(
+        self, ranges: dict[str, list[tuple[int, int]]]
+    ) -> list[Node]:
+        """Return symbol nodes whose line span overlaps a changed range.
+
+        ``ranges`` maps an index-relative path to its changed ``(start, end)``
+        line ranges. A ``function``/``class`` node overlaps when its
+        ``[start_line, end_line]`` intersects any changed range in its file.
+        Ordered by path then line; deduplicated.
+        """
+        changed: list[Node] = []
+        seen: set[str] = set()
+        for path, path_ranges in ranges.items():
+            rows = self._con.execute(
+                f"SELECT {self._NODE_COLUMNS} FROM nodes "
+                "WHERE path = ? AND kind IN ('function', 'class') "
+                "ORDER BY start_line, node_id",
+                [path],
+            ).fetchall()
+            for row in rows:
+                node = self._row_to_node(row)
+                if node.node_id in seen:
+                    continue
+                if any(
+                    node.start_line <= end and start <= node.end_line
+                    for start, end in path_ranges
+                ):
+                    changed.append(node)
+                    seen.add(node.node_id)
+        return sorted(changed, key=self._order_key)
+
+    def _one_hop_neighbourhood(self, changed_ids: set[str]) -> list[NeighbourSymbol]:
+        """Return the one-hop dependency neighbours of the changed symbols.
+
+        For each dependency edge with exactly one endpoint in ``changed_ids``,
+        the other endpoint is a neighbour, tagged ``"<kind>:out"`` when the
+        changed symbol depends on it and ``"<kind>:in"`` when it depends on the
+        changed symbol. A symbol already in ``changed_ids`` is never a
+        neighbour (it is reported as changed). Ordered by path then line, with
+        the first-seen relation kept per neighbour.
+        """
+        if not changed_ids:
+            return []
+        ids = list(changed_ids)
+        id_ph = ", ".join(["?"] * len(ids))
+        kind_ph = ", ".join(["?"] * len(_DEPENDENCY_KINDS))
+        rows = self._con.execute(
+            f"""
+            SELECT e.kind, e.src_id, e.dst_id,
+                   {self._node_select("s")}, {self._node_select("d")}
+            FROM edges e
+            JOIN nodes s ON s.node_id = e.src_id
+            JOIN nodes d ON d.node_id = e.dst_id
+            WHERE e.kind IN ({kind_ph})
+              AND (e.src_id IN ({id_ph}) OR e.dst_id IN ({id_ph}))
+            ORDER BY d.path, d.start_line, s.path, s.start_line
+            """,
+            [*_DEPENDENCY_KINDS, *ids, *ids],
+        ).fetchall()
+        neighbours: dict[str, NeighbourSymbol] = {}
+        for row in rows:
+            kind, src_id, dst_id = row[0], row[1], row[2]
+            src_changed = src_id in changed_ids
+            dst_changed = dst_id in changed_ids
+            if src_changed == dst_changed:
+                continue  # both or neither changed: not a boundary hop
+            if src_changed:
+                node = self._row_to_node(row[11:19])
+                relation = f"{kind}:out"
+            else:
+                node = self._row_to_node(row[3:11])
+                relation = f"{kind}:in"
+            if node.node_id in changed_ids or node.node_id in neighbours:
+                continue
+            neighbours[node.node_id] = NeighbourSymbol(node=node, relation=relation)
+        return sorted(neighbours.values(), key=lambda n: self._order_key(n.node))
 
     # Dependency edge kinds that define "something depends on this" — the same
     # set the analytics phase ranks over. An entry point has zero inbound edges

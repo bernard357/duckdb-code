@@ -3,8 +3,11 @@
 Any MCP client (Docker Agent, Claude Desktop, Claude Code, Cursor) can spawn
 ``duckdb-code mcp`` as a subprocess and call the twelve tools ``search``,
 ``find_similar``, ``overview``, ``related_tests``, ``history``, ``links``,
-``impact``, ``explain``, ``report``, ``export``, ``analytics``, and
-``index_status``. The server also advertises a
+``impact``, ``report``, ``export``, ``analytics``, ``index_status``, and
+``context_for_change``. ``explain`` is no longer advertised over MCP — its
+structural neighbourhood is covered by ``overview``/``context_for_change`` and
+the per-symbol detail the other tools return — but it remains on the SDK and
+CLI. The server also advertises a
 ``description`` and ``instructions`` so a client can route to it and pick a
 tool by intent. The server is built on the official ``mcp`` SDK.
 
@@ -351,41 +354,6 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             store.close()
 
     @_described(server)
-    def explain(target: str) -> dict:
-        """Use this to review the structure around a given symbol or file.
-
-        Reach for this to understand a symbol or file in context — what it is
-        made of and how it connects — before changing or extending it.
-
-        Argument:
-        - target: a dotted qualified name (e.g. ``pkg.module.Symbol``) or a file
-          path, resolved the same way as ``impact``.
-
-        Returns one JSON object with:
-        - target: the target string, echoed back.
-        - resolved: the node(s) the target matched, in the same order as
-          ``explanations`` (empty when nothing matched).
-        - ambiguous: true when a symbol target matched more than one distinct
-          qualified name.
-        - explanations: one entry per resolved node, each with:
-          - node: the resolved node itself.
-          - defines: the symbols this node contains (a file/module/class's
-            members) — the one forward read of the ``defines`` relation.
-          - fan_out: its direct dependencies (nodes this one points to).
-          - fan_in: its direct dependents (nodes that point to this one).
-          - bases / subclasses: for a class node, its parent and child classes
-            via the inherits relation; empty for non-class nodes.
-          - fan_in_count / fan_out_count: the sizes of fan_in / fan_out.
-
-        An unresolved target returns empty ``resolved`` and ``explanations``.
-        """
-        store = CodeStore(settings=resolved)
-        try:
-            return store.explain(target).model_dump()
-        finally:
-            store.close()
-
-    @_described(server)
     def report() -> dict:
         """Use this to explore the metadata of the codebase index itself.
 
@@ -530,6 +498,37 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         store = CodeStore(settings=resolved)
         try:
             return store.index_status().model_dump()
+        finally:
+            store.close()
+
+    @_described(server)
+    def context_for_change(base: str | None = None) -> dict:
+        """Use this to gather the context around a code change for review or PR.
+
+        Reach for this when writing or reviewing a change: it returns the
+        symbols the change touches plus their direct dependency neighbours —
+        the blast-radius context an LSP cannot assemble from a diff.
+
+        Argument:
+        - base: what to diff against. Omit (or null) to diff the working tree
+          against HEAD — the current uncommitted work. Pass a branch or ref name
+          to diff HEAD against it — a feature branch's changes.
+
+        Returns one JSON object with:
+        - base: the resolved comparison, echoed back (`working-tree` or the ref).
+        - changed: the touched symbols, each {node} — a symbol whose line span
+          overlaps a changed line range.
+        - neighbourhood: their one-hop dependency neighbours, each {node,
+          relation}, where relation is `<kind>:out` (the change depends on this)
+          or `<kind>:in` (this depends on the change).
+
+        Reads git at query time; when git is unavailable, the root is not a
+        repo, or the diff touches nothing indexed, `changed` and `neighbourhood`
+        are empty (never an error).
+        """
+        store = CodeStore(settings=resolved)
+        try:
+            return store.context_for_change(base).model_dump()
         finally:
             store.close()
 

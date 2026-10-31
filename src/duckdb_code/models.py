@@ -460,3 +460,46 @@ class IndexStatus(BaseModel):
     indexed_at: str | None = None
     node_count: int = 0
     edge_count: int = 0
+
+
+class ChangedSymbol(BaseModel):
+    """A symbol touched by a change, in a ``context_for_change`` result.
+
+    ``node`` is the touched symbol; it is one whose ``[start_line, end_line]``
+    span overlaps a changed line range in its file. The ``id``/``path``/``range``
+    the contract lists are read off ``node`` (``node.node_id`` /``node.path`` /
+    ``(node.start_line, node.end_line)``).
+    """
+
+    node: Node
+
+
+class NeighbourSymbol(BaseModel):
+    """A one-hop graph neighbour of a changed symbol.
+
+    ``node`` is a symbol directly connected to a changed symbol by a dependency
+    edge; ``relation`` names how, as ``"<kind>:out"`` when the changed symbol
+    depends on this neighbour (the edge points out from the change) or
+    ``"<kind>:in"`` when this neighbour depends on the changed symbol (the edge
+    points in). It is the blast-radius context for review and PR-description
+    work, not the full transitive set — exactly one hop.
+    """
+
+    node: Node
+    relation: str
+
+
+class ContextForChange(BaseModel):
+    """The result of a ``context_for_change`` query: a change's local context.
+
+    ``changed`` are the symbols the diff touched (by line-range overlap);
+    ``neighbourhood`` are their direct dependency neighbours, each tagged with
+    the ``relation`` by which it connects. ``base`` echoes what the change was
+    measured against (``"working-tree"`` or a branch/ref name). Empty
+    ``changed``/``neighbourhood`` when git is unavailable, the root is not a
+    repo, or the diff touches nothing in the index — never an error.
+    """
+
+    base: str
+    changed: list[ChangedSymbol]
+    neighbourhood: list[NeighbourSymbol]

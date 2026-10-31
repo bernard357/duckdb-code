@@ -220,7 +220,6 @@ query", use the sibling
 - `links(target)` — cross-boundary edges an LSP never sees together: HTTP
   route↔client, Markdown links/embeds/tags.
 - `impact(target, …)` — transitive reverse-dependency set for a symbol or file.
-- `explain(target, …)` — structural neighbourhood of a symbol or file.
 - `report()` — introspects the index: database path, schema version, languages,
   and node/edge counts.
 - `export(out=…, inline=…)` — returns the whole graph as `{meta, nodes, edges}`
@@ -230,6 +229,12 @@ query", use the sibling
   candidates, `hotspots` (centrality × churn).
 - `index_status()` — index freshness: the indexed commit, a working-tree dirty
   flag, when it was built, and the node/edge counts.
+- `context_for_change(base=…)` — the symbols a diff touches plus their one-hop
+  neighbourhood, for review and PR work.
+
+`explain` (a symbol's structural neighbourhood) is on the SDK and the
+`duckdb-code explain` CLI verb, but is not advertised over MCP — `overview` and
+`context_for_change` cover it there.
 
 These twelve are the first slice of a larger, LSP-complementary tool contract:
 whole-repo, precomputed questions (intent search, one-call impact,

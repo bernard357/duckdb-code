@@ -162,7 +162,7 @@ a rewrite:
 | Today | Fate | Becomes |
 | --- | --- | --- |
 | `impact` | __Keep + extend__ | aggregate affected by module, add entry points and related tests |
-| `explain` | __Fold__ | structural neighbourhood merges into `overview`/`context_for_change` and the per-symbol detail other tools return |
+| `explain` | __Folded__ | dropped from the MCP surface (structural neighbourhood now covered by `overview`/`context_for_change`); kept on the SDK and CLI |
 | `report` | __Reshape__ | split into `index_status` (freshness) and `overview` (repo map) |
 | `export` | __Keep__ | the whole-graph JSON dump, unchanged |
 | — | __Add__ | `search`, `links`, `related_tests`, `find_similar`, `history`, `analytics`, `context_for_change` |
@@ -190,7 +190,8 @@ follow:
 2. __Differentiators__ (the gap nobody covers well): `links` (shipped),
    `find_similar` (shipped).
 3. __Remaining__: `analytics` (shipped), `index_status` (shipped),
-   `context_for_change`, and folding `explain` / reshaping `report`.
+   `context_for_change` (shipped); `explain` folded off the MCP surface (kept on
+   the SDK/CLI); `report` reshaping still open.
 
 Each follow-on issue is scoped to one primitive (or a small group that shares a
 data source) so its PR stays reviewable; `search`, `find_similar`, and
