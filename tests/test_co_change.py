@@ -97,3 +97,75 @@ def test_co_change_degrades_without_git_repo(tmp_path):
     assert cc == 0
     assert con.execute("SELECT MAX(churn) FROM files").fetchone()[0] == 0
     store.close()
+
+
+def test_history_returns_commits_co_change_and_churn(tmp_path):
+    repo = tmp_path / "hist"
+    repo.mkdir()
+    _git(["init"], repo)
+    a = repo / "a.py"
+    b = repo / "b.py"
+    _write(a, "def fa():\n    return 1\n")
+    _write(b, "def fb():\n    return 2\n")
+    _git(["add", "a.py", "b.py"], repo)
+    _git(["commit", "-m", "first ab"], repo)
+    _write(a, "def fa():\n    return 10\n")
+    _write(b, "def fb():\n    return 20\n")
+    _git(["add", "a.py", "b.py"], repo)
+    _git(["commit", "-m", "second ab"], repo)
+
+    store = CodeStore(db_path=str(tmp_path / "hist.duckdb"), root=str(repo))
+    index_folder(store, repo)
+    result = store.history("a.fa")
+    assert result.path == "a.py"
+    assert result.churn == 2
+    # Two commits touched a.py, newest first.
+    assert len(result.commits) == 2
+    assert result.commits[0].summary == "second ab"
+    assert all(c.sha for c in result.commits)
+    # b.py is a co-change partner of a.py.
+    partners = {p.path for p in result.co_change}
+    assert "b.py" in partners
+    store.close()
+
+
+def test_history_empty_without_git(tmp_path):
+    src = tmp_path / "plain2"
+    src.mkdir()
+    _write(src / "m.py", "def m():\n    return 1\n")
+    store = CodeStore(db_path=str(tmp_path / "plain2.duckdb"), root=str(src))
+    index_folder(store, src)
+    result = store.history("m.m")
+    assert result.resolved  # the symbol resolves
+    assert result.commits == []
+    assert result.co_change == []
+    assert result.churn == 0
+    store.close()
+
+
+def test_co_change_uses_meta_root_not_just_settings(tmp_path):
+    # Regression: the CLI opens the store WITHOUT a settings.root, so the
+    # co-change pass must read the indexed folder from meta.root (written by the
+    # index) rather than settings.root — otherwise CLI-built indexes get no
+    # co-change or history.
+    repo = tmp_path / "metaroot"
+    repo.mkdir()
+    _git(["init"], repo)
+    a = repo / "a.py"
+    b = repo / "b.py"
+    _write(a, "def fa():\n    return 1\n")
+    _write(b, "def fb():\n    return 2\n")
+    _git(["add", "a.py", "b.py"], repo)
+    _git(["commit", "-m", "ab"], repo)
+    _write(a, "def fa():\n    return 9\n")
+    _write(b, "def fb():\n    return 9\n")
+    _git(["add", "a.py", "b.py"], repo)
+    _git(["commit", "-m", "ab2"], repo)
+
+    # No root= on the constructor, mirroring the CLI; pass the folder to index.
+    store = CodeStore(db_path=str(tmp_path / "metaroot.duckdb"))
+    index_folder(store, repo)
+    con = store._con
+    assert con.execute("SELECT COUNT(*) FROM commits").fetchone()[0] > 0
+    assert con.execute("SELECT MAX(churn) FROM files").fetchone()[0] == 2
+    store.close()

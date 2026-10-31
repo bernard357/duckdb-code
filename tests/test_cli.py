@@ -77,7 +77,7 @@ def test_report_json_shape(tmp_path):
     result = runner.invoke(app, ["report", "--db", db, "--json"])
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
-    assert payload["schema_version"] == 4
+    assert payload["schema_version"] == 5
     assert payload["languages"] == ["python", "typescript"]
     assert payload["files_by_language"] == {"python": 5, "typescript": 2}
     assert payload["nodes_by_kind"]["class"] == 4

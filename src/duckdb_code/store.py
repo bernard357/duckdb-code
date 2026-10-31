@@ -22,11 +22,14 @@ import duckdb
 from duckdb_code.config import Settings
 from duckdb_code.extractors.registry import EXTENSION_LANGUAGE
 from duckdb_code.models import (
+    CoChangePartner,
     CodeExport,
     CodeExportEdge,
     CodeExportNode,
+    CommitInfo,
     Explanation,
     ExplanationResult,
+    HistoryResult,
     ImpactNode,
     ImpactResult,
     ModuleSummary,
@@ -44,6 +47,20 @@ if TYPE_CHECKING:
     from duckdb_code.indexer import IndexReport
 
 logger = logging.getLogger(__name__)
+
+
+def _iso_or_none(value: object) -> str | None:
+    """Render a stored timestamp as an ISO string, or ``None``.
+
+    DuckDB returns a ``TIMESTAMP`` column as a ``datetime``; coerce it to an ISO
+    string for the JSON-friendly ``CommitInfo``. A ``None`` stays ``None``, and
+    any already-string value passes through.
+    """
+    if value is None:
+        return None
+    isoformat = getattr(value, "isoformat", None)
+    return isoformat() if callable(isoformat) else str(value)
+
 
 # The reverse-dependency edge kinds the impact BFS and explain fan-in/fan-out
 # traverse. ``defines`` is deliberately absent: it is a container-structure
@@ -113,6 +130,15 @@ SCHEMA_DDL = (
         embedding DOUBLE[] NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS commits (
+        sha          TEXT NOT NULL,
+        path         TEXT NOT NULL,
+        committed_at TIMESTAMP,
+        summary      TEXT NOT NULL,
+        ordinal      INTEGER NOT NULL
+    )
+    """,
 )
 
 # Read-write-only indexes. No ``idx_files_path`` — the ``files.path`` primary
@@ -130,11 +156,12 @@ INDEX_DDL = (
 # confidence, the source of truth from which the ``resolution`` flag is
 # derived) and ``nodes.centrality`` (index-time PageRank-style rank). Version 3
 # adds the ``vectors`` table (one per-symbol embedding, keyed by ``node_id``)
-# backing semantic search. Version 4 adds ``files.churn`` (per-file commit
+# backing semantic search. Version 4 added ``files.churn`` (per-file commit
 # count) and the ``file_changes_with`` edge kind (git co-change between files).
-# A store opened against an older file recreates the schema on the next full
-# index.
-SCHEMA_VERSION = 4
+# Version 5 adds the ``commits`` table (recent git commits per file, for the
+# ``history`` tool). A store opened against an older file recreates the schema
+# on the next full index.
+SCHEMA_VERSION = 5
 
 
 class CodeStore:
@@ -531,6 +558,80 @@ class CodeStore:
         tests = [RelatedTest(node=node) for node in self._tests_reaching(seed_ids)]
         resolved_sorted = sorted(resolved, key=self._order_key)
         return RelatedTestsResult(symbol=target, resolved=resolved_sorted, tests=tests)
+
+    def history(self, target: str) -> HistoryResult:
+        """Return git signals for ``target`` — commits, co-change, and churn.
+
+        Resolves ``target`` to node(s), takes the file they live in (history is
+        tracked per file), and reads the index-time git data: the recent
+        ``commits`` touching that file (newest first), its ``co_change``
+        partners from ``file_changes_with`` edges (most-coupled first), and the
+        file's ``churn``. Coupling and churn are signals no static graph shows.
+
+        Returns empty signals when the target matches nothing, or when the index
+        carries no git history (built outside a repo or without git) — never
+        raising. When several resolved nodes span different files, the first by
+        the stable order supplies the file.
+        """
+        target = target.strip()
+        if not target:
+            return HistoryResult(symbol=target, resolved=[])
+        resolved, _ambiguous, _origin = self._resolve_target(target)
+        if not resolved:
+            return HistoryResult(symbol=target, resolved=[])
+        resolved_sorted = sorted(resolved, key=self._order_key)
+        path = resolved_sorted[0].path
+
+        commit_rows = self._con.execute(
+            "SELECT DISTINCT sha, committed_at, summary, ordinal FROM commits "
+            "WHERE path = ? ORDER BY ordinal",
+            [path],
+        ).fetchall()
+        commits = [
+            CommitInfo(
+                sha=row[0],
+                committed_at=_iso_or_none(row[1]),
+                summary=row[2],
+            )
+            for row in commit_rows
+        ]
+
+        # Co-change partners: the OTHER endpoint of a file_changes_with edge on
+        # this file's node, either direction, ranked by the normalized
+        # co-occurrence confidence.
+        file_node_id = f"file:{path}@{path}:1"
+        partner_rows = self._con.execute(
+            """
+            SELECT n.path, e.confidence
+            FROM edges e JOIN nodes n ON n.node_id =
+                CASE WHEN e.src_id = ? THEN e.dst_id ELSE e.src_id END
+            WHERE e.kind = 'file_changes_with' AND (e.src_id = ? OR e.dst_id = ?)
+            ORDER BY e.confidence DESC, n.path
+            """,
+            [file_node_id, file_node_id, file_node_id],
+        ).fetchall()
+        churn_row = self._con.execute(
+            "SELECT churn FROM files WHERE path = ?", [path]
+        ).fetchone()
+        churn = churn_row[0] if churn_row else 0
+        # The raw together_count is not stored; surface the normalized coupling
+        # strength scaled to the file's churn as a best-effort count proxy.
+        co_change = [
+            CoChangePartner(
+                path=row[0],
+                together_count=max(1, round(row[1] * churn)) if churn else 1,
+            )
+            for row in partner_rows
+        ]
+
+        return HistoryResult(
+            symbol=target,
+            resolved=resolved_sorted,
+            path=path,
+            commits=commits,
+            co_change=co_change,
+            churn=churn,
+        )
 
     def _reverse_defines(self, dst_ids: set[str]) -> list[Node]:
         """Return the nodes that ``defines``-point at any id in ``dst_ids``."""

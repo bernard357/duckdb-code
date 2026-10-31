@@ -1,9 +1,9 @@
 """MCP-over-stdio server exposing duckdb-code query tools.
 
 Any MCP client (Docker Agent, Claude Desktop, Claude Code, Cursor) can spawn
-``duckdb-code mcp`` as a subprocess and call the eight tools ``search``,
-``find_similar``, ``overview``, ``related_tests``, ``impact``, ``explain``,
-``report``, and ``export``. The server also advertises a
+``duckdb-code mcp`` as a subprocess and call the nine tools ``search``,
+``find_similar``, ``overview``, ``related_tests``, ``history``, ``impact``,
+``explain``, ``report``, and ``export``. The server also advertises a
 ``description`` and ``instructions`` so a client can route to it and pick a
 tool by intent. The server is built on the official ``mcp`` SDK.
 
@@ -83,6 +83,8 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             "and most central symbols, sized to a budget.\n"
             "- `related_tests` — the tests to run after editing a symbol or "
             "file.\n"
+            "- `history` — git signals around a symbol or file: recent commits, "
+            "co-change partners, and churn.\n"
             "- `explain` — review the structure around a given symbol or file "
             "(what it defines, what it depends on, what depends on it).\n"
             "- `impact` — evaluate the implications of a change by finding "
@@ -224,6 +226,38 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         store = CodeStore(settings=resolved)
         try:
             return store.related_tests(target).model_dump()
+        finally:
+            store.close()
+
+    @_described(server)
+    def history(target: str) -> dict:
+        """Use this for the git signals around a symbol or file.
+
+        Returns the recent change history of the file a symbol lives in — the
+        coupling and churn no static graph shows. Reach for this to see what
+        usually changes alongside something, and how volatile it is, before
+        editing.
+
+        Arguments:
+        - target: a dotted qualified name (e.g. ``pkg.module.Symbol``) or a file
+          path, resolved the same way as `impact`/`explain`.
+
+        Returns one JSON object with:
+        - symbol: the target string, echoed back.
+        - resolved: the node(s) the target matched.
+        - path: the file history is tracked at (the resolved node's file).
+        - commits: recent commits touching that file, newest first, each
+          {sha, committed_at, summary}.
+        - co_change: the files that usually change with it, most-coupled first,
+          each {path, together_count}.
+        - churn: how many recent commits touched the file.
+
+        Returns empty signals when the target matches nothing or the index
+        carries no git history (built outside a repo or without git).
+        """
+        store = CodeStore(settings=resolved)
+        try:
+            return store.history(target).model_dump()
         finally:
             store.close()
 

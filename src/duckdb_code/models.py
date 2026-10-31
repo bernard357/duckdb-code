@@ -308,3 +308,41 @@ class RelatedTestsResult(BaseModel):
     symbol: str
     resolved: list[Node]
     tests: list[RelatedTest]
+
+
+class CommitInfo(BaseModel):
+    """One recent commit touching a symbol's file, in a :class:`HistoryResult`."""
+
+    sha: str
+    committed_at: str | None = None
+    summary: str
+
+
+class CoChangePartner(BaseModel):
+    """A file that changes together with the target's file.
+
+    ``together_count`` is the number of recent commits that touched both files;
+    higher means tighter coupling.
+    """
+
+    path: str
+    together_count: int
+
+
+class HistoryResult(BaseModel):
+    """The result of a ``history`` query: git signals for a symbol.
+
+    ``symbol`` is the query, echoed back; ``resolved`` is the node(s) it matched;
+    ``path`` is the file those nodes live in (the unit history is tracked at).
+    ``commits`` are the recent commits touching that file (newest first),
+    ``co_change`` the files that usually change with it (most-coupled first),
+    and ``churn`` the file's recent commit count. Empty signals when the index
+    carries no git history (built outside a repo or without git).
+    """
+
+    symbol: str
+    resolved: list[Node]
+    path: str | None = None
+    commits: list[CommitInfo] = []
+    co_change: list[CoChangePartner] = []
+    churn: int = 0

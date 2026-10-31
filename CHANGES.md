@@ -8,6 +8,13 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
 
 ### Added
 
+- __`history` tool and CLI verb.__ Git signals for a symbol or file: the recent
+  commits touching its file, the files that usually change with it (co-change
+  partners), and its churn — coupling and volatility no static graph shows.
+  Reads the `commits` table (schema v5, recent commits per file) plus the
+  `file_changes_with` edges and `files.churn`. Exposed as
+  `CodeStore.history(target)`, the `history` MCP tool, and
+  `duckdb-code history <target>`.
 - __Git co-change edges and per-file churn (schema v4).__ The enrichment phase
   now mines recent git history (`git log` over the last 500 commits) for files
   that change together, adding `file_changes_with` edges between file nodes

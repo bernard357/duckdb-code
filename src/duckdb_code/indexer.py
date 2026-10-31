@@ -1020,7 +1020,7 @@ def _recreate_tables(store: CodeStore) -> None:
     ``_ensure_schema`` agree.
     """
     con = store._con
-    for table in ("edges", "nodes", "files", "meta", "vectors"):
+    for table in ("edges", "nodes", "files", "meta", "vectors", "commits"):
         con.execute(f"DROP TABLE IF EXISTS {table}")
     for ddl in SCHEMA_DDL:
         con.execute(ddl)
@@ -1245,27 +1245,42 @@ def _compute_co_change(store: CodeStore) -> None:
     )
     if not file_nodes:
         return
-    root = store.settings.root
+    # The indexed folder: the authoritative ``meta.root`` the write path
+    # persisted (the CLI opens the store without a ``settings.root``, so prefer
+    # meta and fall back to the setting).
+    root_row = con.execute("SELECT value FROM meta WHERE key = 'root'").fetchone()
+    root = (root_row[0] if root_row else None) or store.settings.root
     if not root:
         return
 
-    commits = _git_log_file_sets(Path(root))
+    commits = _git_log_commits(Path(root))
     if not commits:
         return
 
     indexed = set(file_nodes)
     churn: dict[str, int] = {}
     pair_counts: dict[tuple[str, str], int] = {}
-    for files in commits:
-        touched = [f for f in files if f in indexed]
+    commit_rows: list[tuple[str, str, str | None, str, int]] = []
+    for ordinal, commit in enumerate(commits):
+        touched = [f for f in commit.files if f in indexed]
         if not touched or len(touched) > _CO_CHANGE_MAX_FILES_PER_COMMIT:
             continue
         for path in touched:
             churn[path] = churn.get(path, 0) + 1
+            commit_rows.append(
+                (commit.sha, path, commit.committed_at, commit.summary, ordinal)
+            )
         ordered = sorted(set(touched))
         for i, a in enumerate(ordered):
             for b in ordered[i + 1 :]:
                 pair_counts[(a, b)] = pair_counts.get((a, b), 0) + 1
+
+    if commit_rows:
+        con.executemany(
+            "INSERT INTO commits (sha, path, committed_at, summary, ordinal) "
+            "VALUES (?, ?, ?, ?, ?)",
+            commit_rows,
+        )
 
     if churn:
         con.executemany(
@@ -1289,15 +1304,32 @@ def _compute_co_change(store: CodeStore) -> None:
     )
 
 
-def _git_log_file_sets(folder: Path) -> list[list[str]]:
-    """Return the per-commit file lists from recent git history, or ``[]``.
+class _CommitRecord(BaseModel):
+    """One recent commit from the git-log pass: metadata plus its touched files.
 
-    Shells out to ``git log --name-only`` over the recent commit window, parsed
-    into one list of folder-relative paths per commit. Returns ``[]`` when git
-    is unavailable, the folder is not a repository, or git errors — the caller
-    then adds no co-change data. Paths are reported relative to the repo root;
-    they are matched against stored paths by the caller.
+    ``sha`` is abbreviated, ``committed_at`` is the committer ISO date (or
+    ``None`` if unparseable), ``summary`` is the subject line, and ``files`` are
+    the folder-relative paths it touched (rebased onto the indexed folder).
     """
+
+    sha: str
+    committed_at: str | None
+    summary: str
+    files: list[str]
+
+
+def _git_log_commits(folder: Path) -> list[_CommitRecord]:
+    """Return recent commit records from git history, newest first, or ``[]``.
+
+    Shells out to ``git log --name-only`` over the recent commit window with a
+    NUL-delimited header (sha, committer date, subject) per commit followed by
+    the touched file paths. Returns ``[]`` when git is unavailable, the folder
+    is not a repository, or git errors — the caller then adds no history data.
+    Paths are rebased from repo-root-relative onto the indexed folder; files
+    outside the indexed subtree are dropped.
+    """
+    # Header: NUL, then sha / ISO date / subject separated by unit separator.
+    fmt = "%x00%h%x1f%cI%x1f%s"
     try:
         proc = subprocess.run(
             [
@@ -1307,7 +1339,7 @@ def _git_log_file_sets(folder: Path) -> list[list[str]]:
                 "log",
                 f"-n{_CO_CHANGE_COMMIT_WINDOW}",
                 "--name-only",
-                "--pretty=format:%x00",  # NUL marks a new commit
+                f"--pretty=format:{fmt}",
                 "--no-renames",
             ],
             capture_output=True,
@@ -1316,32 +1348,34 @@ def _git_log_file_sets(folder: Path) -> list[list[str]]:
             check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:  # pragma: no cover
-        logger.warning("skipping git co-change (git unavailable): %s", exc)
+        logger.warning("skipping git history (git unavailable): %s", exc)
         return []
     if proc.returncode != 0:
-        logger.info("skipping git co-change (not a git repo or git error)")
+        logger.info("skipping git history (not a git repo or git error)")
         return []
 
-    # The indexed folder may be a subdirectory of the repo; git reports paths
-    # relative to the repo root, while stored paths are relative to the indexed
-    # folder. Rebase git paths onto the indexed folder where possible.
     prefix = _repo_relative_prefix(folder)
-    commits: list[list[str]] = []
-    current: list[str] = []
+    commits: list[_CommitRecord] = []
+    current: _CommitRecord | None = None
     for line in proc.stdout.splitlines():
-        if line == "\x00" or line == "":
-            if current:
+        if line.startswith("\x00"):
+            if current is not None:
                 commits.append(current)
-                current = []
+            sha, _, rest = line[1:].partition("\x1f")
+            date, _, summary = rest.partition("\x1f")
+            current = _CommitRecord(
+                sha=sha, committed_at=date or None, summary=summary, files=[]
+            )
+            continue
+        if not line or current is None:
             continue
         rel = line
         if prefix and line.startswith(prefix):
             rel = line[len(prefix) :]
         elif prefix:
-            # Outside the indexed subtree; cannot match a stored path.
-            continue
-        current.append(rel)
-    if current:
+            continue  # outside the indexed subtree
+        current.files.append(rel)
+    if current is not None:
         commits.append(current)
     return commits
 

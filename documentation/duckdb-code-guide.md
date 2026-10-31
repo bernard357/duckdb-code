@@ -77,9 +77,9 @@ heading structure, and `report` surfaces the page/heading/tag counts. See the
 
 ## The CLI {#the-cli}
 
-The `duckdb-code` CLI exposes eleven verbs: `index`, `watch`, `search`,
-`find-similar`, `overview`, `related-tests`, `report`, `impact`, `explain`,
-`export`, and `mcp`. Every verb opens the store read-write
+The `duckdb-code` CLI exposes twelve verbs: `index`, `watch`, `search`,
+`find-similar`, `overview`, `related-tests`, `history`, `report`, `impact`,
+`explain`, `export`, and `mcp`. Every verb opens the store read-write
 — incremental updates are the rule for this package. All honor the
 `DUCKDB_CODE_*` environment variables and the `--db` override, and `--json`
 emits machine-readable output.

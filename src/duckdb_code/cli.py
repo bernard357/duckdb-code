@@ -335,6 +335,31 @@ def related_tests(
 
 
 @app.command()
+def history(
+    target: str = typer.Argument(..., help="Symbol or file path."),
+    db: str | None = typer.Option(None, "--db", help="DuckDB file path."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON."),
+) -> None:
+    """Show git signals for a symbol or file: commits, co-change, churn."""
+    store = CodeStore(db_path=db)
+    try:
+        result = store.history(target)
+    finally:
+        store.close()
+    if as_json:
+        typer.echo(result.model_dump_json())
+    else:
+        typer.echo(f"File     : {result.path or '(unresolved)'}")
+        typer.echo(f"Churn    : {result.churn}")
+        typer.echo(f"Commits  : {len(result.commits)}")
+        for commit in result.commits:
+            typer.echo(f"  {commit.sha}  {commit.summary}")
+        typer.echo(f"Co-change: {len(result.co_change)}")
+        for partner in result.co_change:
+            typer.echo(f"  {partner.together_count:4d}  {partner.path}")
+
+
+@app.command()
 def explain(
     target: str = typer.Argument(..., help="Symbol or file path."),
     db: str | None = typer.Option(None, "--db", help="DuckDB file path."),
