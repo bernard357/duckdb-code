@@ -143,3 +143,41 @@ def test_links_mcp_tool_emits_the_contract_shape(tmp_path):
         assert link["kind"] == "calls_route"
         assert link["from"]["path"] == "client.ts"
         assert link["to"]["qualified_name"] in {"GET /orders", "POST /orders"}
+
+
+def test_links_surface_calls_route_from_the_client_function(tmp_path):
+    store = _app_tree(tmp_path)
+    try:
+        # Querying by the client *function* that contains the fetch/axios
+        # calls must surface the edges: the JS extractor anchors a call to its
+        # enclosing function, not the module, so `links("load")` is the natural
+        # query an agent makes from the call site.
+        result = store.links("load")
+    finally:
+        store.close()
+    assert result.resolved, "the client function should resolve"
+    assert all(node.kind == "function" for node in result.resolved)
+    assert {link.kind for link in result.links} == {"calls_route"}
+    assert {link.to.qualified_name for link in result.links} == {
+        "GET /orders",
+        "POST /orders",
+    }
+    # The edge is anchored on the function node, in both directions.
+    assert all(link.source.qualified_name == "client.load" for link in result.links)
+
+
+def test_links_resolve_a_route_by_method_and_path(tmp_path):
+    store = _app_tree(tmp_path)
+    try:
+        # A `METHOD /path` string resolves to the route node (not a file path),
+        # so the cross-boundary edge is reachable from the server endpoint by
+        # its route signature.
+        result = store.links("GET /orders")
+    finally:
+        store.close()
+    assert len(result.resolved) == 1
+    assert result.resolved[0].kind == "route"
+    assert result.resolved[0].qualified_name == "GET /orders"
+    assert {link.kind for link in result.links} == {"calls_route"}
+    assert {link.to.qualified_name for link in result.links} == {"GET /orders"}
+    assert all(link.source.qualified_name == "client.load" for link in result.links)

@@ -91,6 +91,11 @@ _CROSS_BOUNDARY_KINDS = (
     "tagged",
 )
 
+# HTTP verbs recognised at the head of a ``METHOD /path`` route qualified name,
+# so ``_resolve_route`` can tell a route string from an ordinary symbol/path.
+# Kept in sync with the extractors' verb sets.
+_HTTP_VERBS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
+
 # A target string is classified as a path (not a symbol) when it carries one of
 # these registered source extensions. Kept in sync with the extractor registry
 # so adding a language's extension there also teaches the resolver.
@@ -365,11 +370,39 @@ class CodeStore:
         Returns ``(nodes, ambiguous, origin)`` where ``origin`` is ``"exact"``
         for a path or exact-qualified-name match and ``"best_effort"`` for a
         symbol suffix match (fix 2). A path match is never ambiguous.
+
+        A ``METHOD /path`` string (e.g. ``"GET /health"``) is tried as a
+        ``route`` node first: its qualified name holds the slash, so the plain
+        path/symbol classifier would otherwise send it down the file-path branch
+        and miss the route. This is what lets ``links("GET /health")`` resolve
+        from the route side of a cross-boundary HTTP edge.
         """
         target = target.strip()
+        route_nodes = self._resolve_route(target)
+        if route_nodes:
+            return route_nodes, False, "exact"
         if self._is_path_target(target):
             return self._resolve_path(target), False, "exact"
         return self._resolve_symbol(target)
+
+    def _resolve_route(self, target: str) -> list[Node]:
+        """Resolve a ``METHOD /path`` string to its ``route`` node(s), if any.
+
+        Only a target shaped like an HTTP verb, a space, then a ``/path`` is
+        considered, so an ordinary symbol or file path never reaches the route
+        table. Matched on ``kind = 'route' AND qualified_name = target``; empty
+        when the shape does not match or no such route was indexed.
+        """
+        verb, _, rest = target.partition(" ")
+        if not rest.startswith("/") or verb.upper() not in _HTTP_VERBS:
+            return []
+        rows = self._con.execute(
+            f"SELECT {self._NODE_COLUMNS} FROM nodes "
+            "WHERE kind = 'route' AND qualified_name = ? "
+            "ORDER BY path, start_line, node_id",
+            [target],
+        ).fetchall()
+        return [self._row_to_node(row) for row in rows]
 
     def _order_key(self, node: Node) -> tuple[str, int, str]:
         return (node.path, node.start_line, node.node_id)

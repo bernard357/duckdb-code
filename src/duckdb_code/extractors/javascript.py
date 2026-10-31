@@ -80,6 +80,12 @@ class _JsTsBuilder:
         self._seen_edges: set[tuple[str, str, str]] = set()
         self._module_id = ""
         self._local_names: set[str] = set()
+        # AST-node identity -> the function node id declared at that node, so the
+        # second (calls/refs) pass can anchor a call to its enclosing function
+        # rather than the module. Keyed on the AST node whose body holds the
+        # calls: a ``function_declaration`` node, or a ``variable_declarator``
+        # whose value is an arrow/function expression.
+        self._func_scopes: dict[int, str] = {}
 
     @staticmethod
     def _line(node) -> tuple[int, int]:
@@ -171,6 +177,9 @@ class _JsTsBuilder:
         decl_id = self._add_node(kind, name, qn, node)
         self._add_edge(self._module_id, decl_id, "defines", "exact")
         self._local_names.add(name)
+        if kind == "function":
+            # Anchor calls in this function's body to the function (not module).
+            self._func_scopes[node.id] = decl_id
         return decl_id
 
     def _handle_class(self, node) -> None:
@@ -203,6 +212,10 @@ class _JsTsBuilder:
                 decl_id = self._add_node("function", name, qn, declarator)
                 self._add_edge(self._module_id, decl_id, "defines", "exact")
                 self._local_names.add(name)
+                # Anchor calls in the arrow/function body to this function. The
+                # value node (the arrow/function expression) is what the second
+                # pass descends into, so key the scope on it.
+                self._func_scopes[value.id] = decl_id
 
     def _handle_import(self, node) -> None:
         source = node.child_by_field_name("source")
@@ -235,6 +248,12 @@ class _JsTsBuilder:
 
     def _emit_calls_and_refs(self, node, src_id: str) -> None:
         kind = node.type
+        # Entering a declared function switches the anchor for its whole
+        # subtree: calls inside ``loadUser`` attach to the function node, not
+        # the module, so ``links("loadUser")`` surfaces its calls_route edge.
+        scoped = self._func_scopes.get(node.id)
+        if scoped is not None:
+            src_id = scoped
         if kind == "call_expression":
             func = node.child_by_field_name("function")
             if func is not None and func.type == "identifier":

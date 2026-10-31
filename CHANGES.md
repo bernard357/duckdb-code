@@ -20,7 +20,14 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
   neither crosses a boundary. Exposed as `store.links(target)`, the
   `duckdb-code links` CLI verb, and the tenth MCP tool; the JSON key `from`
   follows the contract (dumped with `by_alias=True`). Read-only over the
-  existing edges (schema unchanged at v5).
+  existing edges (schema unchanged at v5). A `calls_route` edge is now reachable
+  from either natural endpoint: the JavaScript/TypeScript extractor anchors a
+  client call to its enclosing function (not the file module), so
+  `links("loadUser")` surfaces it from the call site; and a `METHOD /path`
+  string (e.g. `links("GET /orders")`) resolves to the `route` node, so the
+  edge is reachable from the server side by its route signature. Anchoring
+  calls to the enclosing function also sharpens every JS/TS `calls` edge, not
+  just route ones.
 - __Cross-boundary HTTP route edges (limited frameworks).__ The indexer now
   extracts server routes and client calls across languages and links them: a
   `route` node per server route (Python Flask/FastAPI decorators `@app.get` /
