@@ -4,9 +4,10 @@ Verbs: ``index`` (and ``watch``) a folder of source code, ``report`` on
 database content, ``search``/``find_similar`` the indexed symbols,
 ``overview`` the repo map, ``related_tests`` for a target, ``history`` its git
 signals, ``links`` its cross-boundary edges, ``impact`` the reverse-dependency
-set of a target, ``explain`` a target's structure, ``export`` the whole graph
-in the viewer's Cytoscape shape, and ``mcp`` to serve the query tools over
-stdio. All honor the ``DUCKDB_CODE_*`` environment variables and the ``--db``
+set of a target, ``explain`` a target's structure, ``analytics`` a whole-repo
+structural view, ``index-status`` the index freshness, ``export`` the whole
+graph in the viewer's Cytoscape shape, and ``mcp`` to serve the query tools
+over stdio. All honor the ``DUCKDB_CODE_*`` environment variables and the ``--db``
 override. Every verb opens the store read-write, since incremental updates are
 the rule for this package.
 """
@@ -441,6 +442,65 @@ def export(
         Path(out).write_text(text, encoding="utf-8")
     else:
         typer.echo(text)
+
+
+@app.command()
+def analytics(
+    kind: str = typer.Argument(
+        ..., help="View: cycles | clusters | dead_code | hotspots."
+    ),
+    db: str | None = typer.Option(None, "--db", help="DuckDB file path."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON."),
+) -> None:
+    """Whole-repo structural view: cycles, clusters, dead_code, or hotspots."""
+    store = CodeStore(db_path=db)
+    try:
+        result = store.analytics(kind)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    finally:
+        store.close()
+    if as_json:
+        typer.echo(result.model_dump_json())
+        return
+    typer.echo(f"Analytics: {result.kind} ({len(result.results)})")
+    for item in result.results:
+        if item.node is not None:
+            suffix = ""
+            if result.kind == "hotspots":
+                suffix = f"  score={item.score:.4f} churn={item.churn}"
+            typer.echo(f"  {item.node.qualified_name} ({item.node.path}){suffix}")
+        else:
+            typer.echo(f"  [{item.size}] members:")
+            for member in item.members:
+                typer.echo(f"    {member.qualified_name} ({member.path})")
+
+
+@app.command("index-status")
+def index_status(
+    db: str | None = typer.Option(None, "--db", help="DuckDB file path."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON."),
+) -> None:
+    """Report index freshness: indexed commit, dirty flag, counts."""
+    store = CodeStore(db_path=db)
+    try:
+        result = store.index_status()
+    finally:
+        store.close()
+    if as_json:
+        typer.echo(result.model_dump_json())
+        return
+    commit = result.indexed_commit or "(none)"
+    branch = f" ({result.branch})" if result.branch else ""
+    if result.dirty is None:
+        dirty = "unknown"
+    else:
+        dirty = "dirty" if result.dirty else "clean"
+    typer.echo(f"Indexed commit: {commit}{branch}")
+    typer.echo(f"Working tree  : {dirty}")
+    typer.echo(f"Indexed at    : {result.indexed_at or '(unknown)'}")
+    typer.echo(f"Nodes / edges : {result.node_count} / {result.edge_count}")
 
 
 @app.command()

@@ -20,6 +20,8 @@ from duckdb_code.extractors.registry import (
 from duckdb_code.indexer import IndexReport, index_folder
 from duckdb_code.mcp_server import build_server
 from duckdb_code.models import (
+    AnalyticsItem,
+    AnalyticsResult,
     CoChangePartner,
     CodeExport,
     CodeExportEdge,
@@ -31,6 +33,7 @@ from duckdb_code.models import (
     HistoryResult,
     ImpactNode,
     ImpactResult,
+    IndexStatus,
     LinkEdge,
     LinksResult,
     ModuleSummary,
@@ -46,6 +49,8 @@ from duckdb_code.models import (
 from duckdb_code.store import CodeStore
 
 __all__ = [
+    "AnalyticsItem",
+    "AnalyticsResult",
     "CodeExport",
     "CodeExportEdge",
     "CodeExportNode",
@@ -61,6 +66,7 @@ __all__ = [
     "ImpactNode",
     "ImpactResult",
     "IndexReport",
+    "IndexStatus",
     "JsTsExtractor",
     "LinkEdge",
     "LinksResult",

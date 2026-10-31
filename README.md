@@ -207,7 +207,7 @@ query", use the sibling
 
 ## MCP tool
 
-`duckdb-code mcp` is an MCP-over-stdio server exposing ten query tools:
+`duckdb-code mcp` is an MCP-over-stdio server exposing twelve query tools:
 
 - `search(query, limit=…)` — ranked semantic search for symbols by intent, when
   you don't know the name.
@@ -226,8 +226,12 @@ query", use the sibling
 - `export(out=…, inline=…)` — returns the whole graph as `{meta, nodes, edges}`
   JSON, writing it to a file and returning a summary by default (inline only for
   a small graph).
+- `analytics(kind)` — whole-repo views: `cycles`, `clusters`, `dead_code`
+  candidates, `hotspots` (centrality × churn).
+- `index_status()` — index freshness: the indexed commit, a working-tree dirty
+  flag, when it was built, and the node/edge counts.
 
-These ten are the first slice of a larger, LSP-complementary tool contract:
+These twelve are the first slice of a larger, LSP-complementary tool contract:
 whole-repo, precomputed questions (intent search, one-call impact,
 cross-boundary links, history) that a Language Server structurally can't
 answer, while point queries (definition, references, hover, rename,

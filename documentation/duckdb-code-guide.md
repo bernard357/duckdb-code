@@ -114,10 +114,10 @@ and size exclusions while still honoring the ignore files.
 
 ## The MCP server {#the-mcp-server}
 
-`duckdb-code mcp` serves ten tools to any MCP client — `search`,
+`duckdb-code mcp` serves twelve tools to any MCP client — `search`,
 `find_similar`, `overview`, `related_tests`, `history`, `links`, `impact`,
-`explain`, `report`, and `export` — with the same JSON-object shapes as the
-SDK.
+`explain`, `report`, `export`, `analytics`, and `index_status` — with the same
+JSON-object shapes as the SDK.
 `export` returns the whole graph as JSON: by default it writes the
 `{meta, nodes, edges}` document to a file (given `out`, or a temp path) and
 returns a small `{path, node_count, edge_count, meta}` summary rather than the

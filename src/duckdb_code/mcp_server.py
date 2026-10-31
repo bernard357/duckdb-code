@@ -1,9 +1,10 @@
 """MCP-over-stdio server exposing duckdb-code query tools.
 
 Any MCP client (Docker Agent, Claude Desktop, Claude Code, Cursor) can spawn
-``duckdb-code mcp`` as a subprocess and call the ten tools ``search``,
+``duckdb-code mcp`` as a subprocess and call the twelve tools ``search``,
 ``find_similar``, ``overview``, ``related_tests``, ``history``, ``links``,
-``impact``, ``explain``, ``report``, and ``export``. The server also advertises a
+``impact``, ``explain``, ``report``, ``export``, ``analytics``, and
+``index_status``. The server also advertises a
 ``description`` and ``instructions`` so a client can route to it and pick a
 tool by intent. The server is built on the official ``mcp`` SDK.
 
@@ -27,6 +28,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 from duckdb_code.config import Settings
 from duckdb_code.store import CodeStore
@@ -468,6 +470,69 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         summary["path"] = str(path)
         return summary
 
+    @_described(server)
+    def analytics(kind: str) -> dict:
+        """Use this for a whole-repo structural view when planning or reviewing.
+
+        Reach for this to see the codebase as a whole — not a single symbol —
+        before a refactor or review: where the dependency cycles are, how the
+        code clusters, what looks unused, and which code is both central and
+        volatile.
+
+        Argument:
+        - kind: which view to return. One of:
+          - `cycles` — the dependency cycles (strongly-connected groups of
+            symbols that import/call each other, directly or transitively),
+            largest first.
+          - `clusters` — the communities the indexer grouped the graph into,
+            largest first.
+          - `dead_code` — function/class symbols nothing else depends on,
+            conservatively scoped (test symbols and entry points excluded), so
+            the list is a review starting point, not a delete list.
+          - `hotspots` — symbols ranked by centrality x recent file churn: the
+            depended-upon-and-changing code most worth reviewing.
+
+        Returns one JSON object: {kind, results}. Each result row carries the
+        fields relevant to the kind — `members`/`size` for cycles and clusters,
+        `node` for dead_code, and `node`/`score`/`churn` for hotspots. An
+        unknown kind is an error; a view that finds nothing returns an empty
+        `results`.
+        """
+        store = CodeStore(settings=resolved)
+        try:
+            return store.analytics(kind).model_dump()
+        except ValueError as exc:
+            # A bad `kind` is a deliberate tool error, not a server crash: raise
+            # ToolError so the client sees is_error with the message.
+            raise ToolError(str(exc)) from exc
+        finally:
+            store.close()
+
+    @_described(server)
+    def index_status() -> dict:
+        """Use this to check whether the index is fresh before trusting it.
+
+        Reach for this first when a query's answer looks stale: it reports the
+        git commit the index was built from, whether the working tree has
+        changed since (so the index may be out of date), when it was built, and
+        how big it is. Takes no arguments.
+
+        Returns one JSON object with:
+        - indexed_commit / branch: the git revision the index was built from, or
+          null when it was built outside a git repository.
+        - dirty: true when the working tree has uncommitted changes since
+          indexed_commit (the index may be stale), false when clean, or null
+          when git is unavailable or the root is not a repo (unknown — never
+          assume clean).
+        - indexed_at: when the index was last stamped (ISO timestamp).
+        - node_count / edge_count: the index totals.
+        """
+        store = CodeStore(settings=resolved)
+        try:
+            return store.index_status().model_dump()
+        finally:
+            store.close()
+
     return server
 
 
@@ -485,7 +550,7 @@ def run_http(
     """Serve the tools over Streamable HTTP, binding loopback by default.
 
     Binds ``127.0.0.1:8000`` with the SDK's ``/mcp`` path unless ``host`` or
-    ``port`` override it. The same ``build_server(settings)`` and the same four
+    ``port`` override it. The same ``build_server(settings)`` and the same
     tools serve over both transports, so the query-only behaviour and per-tool
     JSON-object shapes are unchanged — only the wire transport differs from
     :func:`run_stdio`.

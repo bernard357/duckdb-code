@@ -14,6 +14,7 @@ plus the two primary keys (``files.path``, ``meta.key``).
 """
 
 import logging
+import subprocess
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
@@ -22,6 +23,8 @@ import duckdb
 from duckdb_code.config import Settings
 from duckdb_code.extractors.registry import EXTENSION_LANGUAGE
 from duckdb_code.models import (
+    AnalyticsItem,
+    AnalyticsResult,
     CoChangePartner,
     CodeExport,
     CodeExportEdge,
@@ -32,6 +35,7 @@ from duckdb_code.models import (
     HistoryResult,
     ImpactNode,
     ImpactResult,
+    IndexStatus,
     LinkEdge,
     LinksResult,
     ModuleSummary,
@@ -95,6 +99,114 @@ _CROSS_BOUNDARY_KINDS = (
 # so ``_resolve_route`` can tell a route string from an ordinary symbol/path.
 # Kept in sync with the extractors' verb sets.
 _HTTP_VERBS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
+
+# The dependency edge kinds ``analytics`` reasons over for cycles and dead code
+# — the same real-dependency signal the index-time centrality/community phase
+# ranks over (``member_of`` and ``file_changes_with`` are derived, not source
+# dependencies, so they are excluded). Mirrors the indexer's analytics set.
+_ANALYTICS_EDGE_KINDS = ("imports", "calls", "inherits", "references")
+
+# Directory segments and name patterns marking a test file, so ``dead_code``
+# does not flag a test symbol as unused. Mirrors the indexer's convention (kept
+# local to avoid a store -> indexer import cycle).
+_TEST_DIR_SEGMENTS = frozenset({"tests", "test", "__tests__", "spec", "__mocks__"})
+
+
+def _is_test_path(path: str) -> bool:
+    """Classify a stored path as a test file by naming/location convention.
+
+    True when any directory segment is a conventional test directory, the
+    basename matches ``test_*``/``*_test``, or it carries a ``.test.``/``.spec.``
+    infix. Mirrors the indexer's classifier so ``dead_code`` excludes the same
+    files the ``tests`` edges were derived from.
+    """
+    pure = PurePosixPath(path)
+    if any(seg in _TEST_DIR_SEGMENTS for seg in pure.parts[:-1]):
+        return True
+    base = pure.name.split(".", 1)[0]
+    if base.startswith("test_") or base.endswith("_test"):
+        return True
+    return ".test." in pure.name or ".spec." in pure.name
+
+
+def _strongly_connected_components(
+    adjacency: dict[str, list[str]],
+) -> list[list[str]]:
+    """Return the strongly-connected components of a directed graph.
+
+    Tarjan's algorithm, implemented iteratively with an explicit work stack so
+    a deep or cyclic dependency graph cannot overflow Python's recursion limit.
+    Each returned component is a list of node ids; a node with no edges is its
+    own singleton component. The caller keeps only components of size > 1 to
+    find cycles.
+    """
+    index_of: dict[str, int] = {}
+    low: dict[str, int] = {}
+    on_stack: set[str] = set()
+    stack: list[str] = []
+    components: list[list[str]] = []
+    counter = 0
+
+    for root in adjacency:
+        if root in index_of:
+            continue
+        # work stack of (node, next-neighbour-index); -1 marks first visit.
+        work: list[tuple[str, int]] = [(root, 0)]
+        while work:
+            node, next_i = work[-1]
+            if next_i == 0:
+                index_of[node] = low[node] = counter
+                counter += 1
+                stack.append(node)
+                on_stack.add(node)
+            neighbours = adjacency.get(node, [])
+            if next_i < len(neighbours):
+                work[-1] = (node, next_i + 1)
+                succ = neighbours[next_i]
+                if succ not in index_of:
+                    work.append((succ, 0))
+                elif succ in on_stack:
+                    low[node] = min(low[node], index_of[succ])
+                continue
+            # all neighbours processed: close the node.
+            if low[node] == index_of[node]:
+                component: list[str] = []
+                while True:
+                    member = stack.pop()
+                    on_stack.discard(member)
+                    component.append(member)
+                    if member == node:
+                        break
+                components.append(component)
+            work.pop()
+            if work:
+                parent = work[-1][0]
+                low[parent] = min(low[parent], low[node])
+    return components
+
+
+def _working_tree_dirty(root: str) -> bool | None:
+    """Return whether ``root``'s git working tree has uncommitted changes.
+
+    Runs a bounded ``git status --porcelain``; a non-empty output means the tree
+    is dirty. Returns ``None`` (unknown) when git is unavailable, the path is
+    not a repository, or git errors — so ``index_status`` never reports an
+    unknown state as clean.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "-C", root, "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):  # pragma: no cover
+        return None
+    if proc.returncode != 0:
+        return None
+    return bool(proc.stdout.strip())
+
 
 # A target string is classified as a path (not a symbol) when it carries one of
 # these registered source extensions. Kept in sync with the extractor registry
@@ -980,6 +1092,192 @@ class CodeStore:
             roots=roots,
             branch=meta.get("branch"),
             head_commit=meta.get("head_commit"),
+        )
+
+    _ANALYTICS_KINDS = ("cycles", "clusters", "dead_code", "hotspots")
+
+    def analytics(self, kind: str) -> AnalyticsResult:
+        """Return a whole-repo structural view for planning and review.
+
+        ``kind`` selects the view, all read from existing index data (no git,
+        no re-parse):
+
+        - ``cycles`` — each dependency cycle (a strongly-connected component of
+          size > 1 over ``imports``/``calls``/``inherits``/``references``),
+          largest first.
+        - ``clusters`` — the index-time communities (the ``member_of``
+          grouping), largest first.
+        - ``dead_code`` — ``function``/``class`` symbols nothing depends on,
+          conservatively scoped: entry points reachable as module/file
+          dependency roots are already rare here, but test symbols and
+          ``__init__``/``__main__``/``main`` conventions are excluded so public
+          API and program entry points are not false positives.
+        - ``hotspots`` — symbols ranked by ``centrality`` x file ``churn``, the
+          volatile-and-central code most worth reviewing first.
+
+        An unknown ``kind`` raises :class:`ValueError`; a view that finds
+        nothing returns empty ``results`` (e.g. an acyclic graph).
+        """
+        if kind not in self._ANALYTICS_KINDS:
+            raise ValueError(
+                f"unknown analytics kind {kind!r}; "
+                f"expected one of {', '.join(self._ANALYTICS_KINDS)}"
+            )
+        dispatch = {
+            "cycles": self._analytics_cycles,
+            "clusters": self._analytics_clusters,
+            "dead_code": self._analytics_dead_code,
+            "hotspots": self._analytics_hotspots,
+        }
+        return AnalyticsResult(kind=kind, results=dispatch[kind]())
+
+    def _analytics_cycles(self) -> list[AnalyticsItem]:
+        """Strongly-connected components (size > 1) over dependency edges.
+
+        Pulls the dependency edge list once and runs Tarjan's SCC iteratively
+        (no recursion, so a deep graph cannot overflow the stack). Each SCC of
+        size > 1 is one dependency cycle; singletons are not cycles and are
+        dropped. Components are returned largest first.
+        """
+        kind_ph = ", ".join(["?"] * len(_ANALYTICS_EDGE_KINDS))
+        rows = self._con.execute(
+            f"SELECT src_id, dst_id FROM edges WHERE kind IN ({kind_ph})",
+            list(_ANALYTICS_EDGE_KINDS),
+        ).fetchall()
+        adjacency: dict[str, list[str]] = {}
+        for src_id, dst_id in rows:
+            adjacency.setdefault(src_id, []).append(dst_id)
+            adjacency.setdefault(dst_id, [])
+        components = _strongly_connected_components(adjacency)
+        cycles = [comp for comp in components if len(comp) > 1]
+        cycles.sort(key=lambda comp: (-len(comp), min(comp)))
+        items: list[AnalyticsItem] = []
+        for comp in cycles:
+            members = sorted(self._nodes_by_ids(comp), key=self._order_key)
+            items.append(AnalyticsItem(members=members, size=len(members)))
+        return items
+
+    def _analytics_clusters(self) -> list[AnalyticsItem]:
+        """The index-time communities, as member lists, largest first.
+
+        Reads the derived ``member_of`` edges: each distinct ``dst`` is a
+        community representative and its ``src`` nodes are the members.
+        """
+        rows = self._con.execute(
+            "SELECT dst_id, src_id FROM edges WHERE kind = 'member_of'"
+        ).fetchall()
+        groups: dict[str, list[str]] = {}
+        for rep_id, member_id in rows:
+            groups.setdefault(rep_id, []).append(member_id)
+        ordered = sorted(groups.values(), key=lambda ids: (-len(ids), min(ids)))
+        items: list[AnalyticsItem] = []
+        for ids in ordered:
+            members = sorted(self._nodes_by_ids(ids), key=self._order_key)
+            if members:
+                items.append(AnalyticsItem(members=members, size=len(members)))
+        return items
+
+    # Symbol names that are program/package entry points by convention, never
+    # dead even with zero inbound dependency edges.
+    _ENTRY_POINT_NAMES = frozenset({"main", "__main__", "__init__"})
+
+    def _analytics_dead_code(self) -> list[AnalyticsItem]:
+        """Symbols nothing depends on, conservatively scoped.
+
+        A ``function``/``class`` node with zero inbound
+        ``imports``/``calls``/``inherits``/``references`` edge is the raw
+        signal. Excluded so public API and program entry points are not false
+        positives: any symbol in a test file (by path convention) and any whose
+        name is a conventional entry point (``main``/``__main__``/``__init__``).
+        Ordered by path then line for a stable, reviewable list.
+        """
+        dep = ", ".join(["?"] * len(_ANALYTICS_EDGE_KINDS))
+        rows = self._con.execute(
+            f"""
+            SELECT {self._node_select("n")}
+            FROM nodes n
+            WHERE n.kind IN ('function', 'class')
+              AND NOT EXISTS (
+                  SELECT 1 FROM edges e
+                  WHERE e.dst_id = n.node_id AND e.kind IN ({dep})
+              )
+            ORDER BY n.path, n.start_line, n.node_id
+            """,
+            list(_ANALYTICS_EDGE_KINDS),
+        ).fetchall()
+        items: list[AnalyticsItem] = []
+        for row in rows:
+            node = self._row_to_node(row)
+            if _is_test_path(node.path):
+                continue
+            if node.name in self._ENTRY_POINT_NAMES:
+                continue
+            items.append(AnalyticsItem(node=node))
+        return items
+
+    def _analytics_hotspots(self) -> list[AnalyticsItem]:
+        """Symbols ranked by ``centrality`` x file ``churn``, highest first.
+
+        Joins each symbol to its file's recent ``churn``; the score is the
+        index-time centrality times that churn, so a symbol that is both
+        depended-upon and volatile ranks first. Symbols in files with zero
+        churn (or zero centrality) score zero and are dropped — a hotspot needs
+        both signals. Capped to the top 50 for a reviewable list.
+        """
+        rows = self._con.execute(
+            f"""
+            SELECT {self._node_select("n")},
+                   n.centrality AS rank, COALESCE(f.churn, 0) AS churn
+            FROM nodes n
+            JOIN files f ON f.path = n.path
+            WHERE n.kind IN ('function', 'class', 'module')
+              AND n.centrality > 0 AND COALESCE(f.churn, 0) > 0
+            ORDER BY n.centrality * COALESCE(f.churn, 0) DESC,
+                     n.qualified_name, n.node_id
+            LIMIT 50
+            """
+        ).fetchall()
+        items: list[AnalyticsItem] = []
+        for row in rows:
+            node = self._row_to_node(row[:-2])
+            rank, churn = row[-2], row[-1]
+            items.append(AnalyticsItem(node=node, score=rank * churn, churn=int(churn)))
+        return items
+
+    def _scalar(self, sql: str) -> object:
+        """Return the first column of the first row, or ``None`` on no row."""
+        row = self._con.execute(sql).fetchone()
+        return row[0] if row is not None else None
+
+    def _count(self, sql: str) -> int:
+        """Return a ``COUNT(*)`` scalar as an int (0 when no row)."""
+        row = self._con.execute(sql).fetchone()
+        return int(row[0]) if row is not None else 0
+
+    def index_status(self) -> IndexStatus:
+        """Return the index's freshness and size, for trusting a stale index.
+
+        Reads the git revision the index was built from (``meta.head_commit`` /
+        ``meta.branch``), the most recent file stamp (``indexed_at``), and the
+        node/edge counts. ``dirty`` — whether the working tree changed since the
+        indexed commit — is computed at query time with a bounded ``git status``
+        against ``meta.root``; it is ``None`` (unknown) when git is unavailable
+        or the root is not a repo, so an unknown state is never reported clean.
+        """
+        meta = dict(self._con.execute("SELECT key, value FROM meta").fetchall())
+        node_count = self._count("SELECT COUNT(*) FROM nodes")
+        edge_count = self._count("SELECT COUNT(*) FROM edges")
+        indexed_at = _iso_or_none(self._scalar("SELECT MAX(stamped_at) FROM files"))
+        root = meta.get("root") or self.settings.root
+        head_commit = meta.get("head_commit")
+        dirty = _working_tree_dirty(root) if root else None
+        return IndexStatus(
+            indexed_commit=head_commit,
+            branch=meta.get("branch"),
+            dirty=dirty,
+            indexed_at=indexed_at,
+            node_count=node_count,
+            edge_count=edge_count,
         )
 
     # Dependency edge kinds that define "something depends on this" — the same

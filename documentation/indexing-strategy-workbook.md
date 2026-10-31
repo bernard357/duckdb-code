@@ -174,8 +174,9 @@ indexed commit and the per-file content hash, which is exactly the state the
 ## Post-index analytics {#analytics}
 
 Whole-graph measures — centrality (PageRank-style) for "most central symbols",
-and Louvain-style community detection for clusters — are computed __at index
-time__, in the post-index phase, over the stored graph, and persisted
+and union-find community detection (connected components, the frugal stand-in
+for a full Louvain pass) for clusters — are computed __at index time__, in the
+post-index phase, over the stored graph, and persisted
 (centrality as a node column, communities as `member_of` edges / community
 nodes). The tools that expose them (`overview`, `analytics`) then _read_
 precomputed values rather than computing them per query; deciding the compute
@@ -214,7 +215,7 @@ Each indexing lesson from the paper and what we do with it:
 | Rich typed edge set (TESTS, CONFIGURES, route, co-change) | __Adopt, staged__ | Each edge kind lands with the tool it backs. |
 | Cross-boundary route edges with confidence | __Adopt, staged__ | Backs `links`. |
 | XXH3 content hashing for incremental | __Adapt__ | Keep the etag seam (same behaviour); XXH3 only if profiled as a bottleneck. |
-| Louvain community detection, post-index | __Adopt, staged__ | Index-time precompute; the `analytics` tool reads it. |
+| Louvain community detection, post-index | __Adapt, staged__ | Index-time precompute via union-find (connected components) as the frugal stand-in; the `analytics` tool reads the `member_of` edges. |
 | Centrality / PageRank ranking | __Adopt, staged__ | Index-time precompute; `overview` reads it. |
 | Store relationships, not source lines | __Adopt__ | Already how the package works; results carry `path + range`. |
 | Louvain / query row ceiling | __Adopt__ | Document a row/traversal bound for very large graphs. |

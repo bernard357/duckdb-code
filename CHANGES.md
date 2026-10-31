@@ -8,6 +8,26 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
 
 ### Added
 
+- __`analytics` tool and CLI verb.__ Whole-repo structural views for planning
+  and review, all read from existing index data (no git, no re-parse):
+  `cycles` (dependency strongly-connected components over
+  imports/calls/inherits/references, via iterative Tarjan), `clusters` (the
+  index-time `member_of` communities), `dead_code` (function/class symbols with
+  zero inbound dependency edge, conservatively scoped — test symbols and
+  `main`/`__init__`/`__main__` excluded, so the list is a review starting point
+  not a delete list), and `hotspots` (symbols ranked by `centrality` × file
+  `churn`). Returns `{kind, results}` with per-kind rows; an unknown kind is a
+  deliberate error. Exposed as `CodeStore.analytics(kind)`, the `analytics` MCP
+  tool, and `duckdb-code analytics <kind>`.
+- __`index_status` tool and CLI verb.__ Index freshness, so an agent can decide
+  whether to trust the index: the git commit/branch it was built from
+  (`meta.head_commit`/`branch`), whether the working tree is dirty since then
+  (a query-time `git status`, `null`/unknown when git is unavailable so an
+  unknown state is never reported clean), the `indexed_at` stamp, and the
+  node/edge counts. Exposed as `CodeStore.index_status()`, the `index_status`
+  MCP tool, and `duckdb-code index-status`. Reshapes the freshness half of
+  `report`. The MCP surface is now twelve tools.
+
 - __`links` tool and CLI verb.__ Surfaces the cross-boundary edges of a symbol
   or file — the links an LSP never sees together. The headline case is the
   HTTP `calls_route` bind from a client call to its server route across

@@ -403,3 +403,60 @@ class HistoryResult(BaseModel):
     commits: list[CommitInfo] = []
     co_change: list[CoChangePartner] = []
     churn: int = 0
+
+
+class AnalyticsItem(BaseModel):
+    """One row of an ``analytics`` result, shaped per the requested ``kind``.
+
+    A single flexible row covers all four analytics views so the result stays
+    ``{kind, results: [...]}`` without a union type. Which fields are populated
+    depends on the kind:
+
+    - ``cycles`` — ``members`` holds the nodes of one dependency cycle (a
+      strongly-connected component of size > 1); ``size`` is their count.
+    - ``clusters`` — ``members`` holds the nodes of one community (the
+      index-time ``member_of`` grouping); ``size`` is their count.
+    - ``dead_code`` — ``node`` is a symbol nothing depends on (conservatively
+      scoped: entry points, exported/public, and test symbols excluded).
+    - ``hotspots`` — ``node`` is a volatile, central symbol; ``score`` is its
+      ``centrality`` x file ``churn`` and ``churn`` the raw file churn.
+    """
+
+    node: Node | None = None
+    members: list[Node] = []
+    size: int = 0
+    score: float = 0.0
+    churn: int = 0
+
+
+class AnalyticsResult(BaseModel):
+    """The result of an ``analytics`` query: a whole-repo structural view.
+
+    ``kind`` echoes the requested view (``cycles``, ``clusters``, ``dead_code``,
+    or ``hotspots``); ``results`` are its rows, each an :class:`AnalyticsItem`
+    shaped for that kind, ordered most-significant first (largest cycle/cluster,
+    or highest hotspot score). An empty ``results`` means the view found nothing
+    (e.g. an acyclic graph for ``cycles``), never an error.
+    """
+
+    kind: str
+    results: list[AnalyticsItem]
+
+
+class IndexStatus(BaseModel):
+    """The result of an ``index_status`` query: index freshness and size.
+
+    ``indexed_commit``/``branch`` are the git revision the index was built from
+    (``None`` when built outside a repo). ``dirty`` is whether the working tree
+    has uncommitted changes since ``indexed_commit``, computed at query time;
+    it is ``None`` when git is unavailable or the root is not a repo, so an
+    unknown state is never reported as clean. ``indexed_at`` is the most recent
+    file stamp (ISO string). ``node_count``/``edge_count`` are the index totals.
+    """
+
+    indexed_commit: str | None = None
+    branch: str | None = None
+    dirty: bool | None = None
+    indexed_at: str | None = None
+    node_count: int = 0
+    edge_count: int = 0

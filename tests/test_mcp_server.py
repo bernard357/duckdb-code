@@ -43,7 +43,7 @@ def _result(db, name, args):
     return json.loads(outcome.content[0].text)
 
 
-def test_exactly_ten_tools_registered(indexed_db):
+def test_exactly_twelve_tools_registered(indexed_db):
     server = _server(indexed_db)
     names = {tool.name for tool in asyncio.run(server.list_tools())}
     assert names == {
@@ -57,6 +57,8 @@ def test_exactly_ten_tools_registered(indexed_db):
         "explain",
         "report",
         "export",
+        "analytics",
+        "index_status",
     }
 
 
@@ -79,6 +81,8 @@ def test_streamable_http_app_carries_the_tools(indexed_db):
         "explain",
         "report",
         "export",
+        "analytics",
+        "index_status",
     }
 
 
@@ -206,3 +210,35 @@ def test_store_opened_for_serving_still_accepts_writes(tmp_path):
     report = index_folder(store, FIXTURE, rebuild=True)
     store.close()
     assert report.nodes > 0
+
+
+def test_analytics_tool_returns_one_analytics_result(indexed_db):
+    payload = _result(indexed_db, "analytics", {"kind": "dead_code"})
+    assert isinstance(payload, dict)
+    assert set(payload) == {"kind", "results"}
+    assert payload["kind"] == "dead_code"
+    assert isinstance(payload["results"], list)
+
+
+def test_analytics_tool_errors_on_unknown_kind(indexed_db):
+    # A bad kind is a deliberate ToolError: the SDK surfaces it by raising
+    # (with the message preserved), not as a normal result.
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    server = _server(indexed_db)
+    with pytest.raises(ToolError, match="unknown analytics kind"):
+        asyncio.run(server.call_tool("analytics", {"kind": "bogus"}))
+
+
+def test_index_status_tool_returns_one_status(indexed_db):
+    payload = _result(indexed_db, "index_status", {})
+    assert isinstance(payload, dict)
+    assert set(payload) == {
+        "indexed_commit",
+        "branch",
+        "dirty",
+        "indexed_at",
+        "node_count",
+        "edge_count",
+    }
+    assert payload["node_count"] > 0

@@ -146,7 +146,7 @@ one, and no source should be orphaned:
 | `links` | cross-boundary / route edges (with `confidence`) |
 | `related_tests` | TESTS edges |
 | `history` | git commit + co-change data |
-| `analytics` | centrality + Louvain communities (`member_of`) |
+| `analytics` | centrality + union-find communities (`member_of`) |
 | `context_for_change` | the core graph + git diff/branch data |
 | `index_status` | the indexed commit + content hash the indexer records |
 
@@ -189,8 +189,8 @@ follow:
    points, and related tests), `related_tests` (shipped), `history` (shipped).
 2. __Differentiators__ (the gap nobody covers well): `links` (shipped),
    `find_similar` (shipped).
-3. __Remaining__: `analytics`, `context_for_change`, `index_status`, and
-   folding `explain` / reshaping `report`.
+3. __Remaining__: `analytics` (shipped), `index_status` (shipped),
+   `context_for_change`, and folding `explain` / reshaping `report`.
 
 Each follow-on issue is scoped to one primitive (or a small group that shares a
 data source) so its PR stays reviewable; `search`, `find_similar`, and
