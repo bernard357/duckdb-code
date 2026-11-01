@@ -10,6 +10,7 @@ limits.
 - [Graph indexing: resolve edges in SQL, not in a Python loop](#graph-indexing)
 - [Graph traversal at scale: recursive SQL or DuckPGQ](#graph-traversal)
 - [Measured scale of a large tree](#measured-scale)
+- [Does an agent benefit? Kilo Code on ~/Public](#agent-benefit)
 
 ## How to optimise performance? {#how-to-optimise}
 
@@ -235,3 +236,66 @@ engine optimization — the ~86% edge reduction here dwarfs the ~5.7x traversal
 speed-up, because the cheapest work is the work you never do. The traversal
 verdict above (`WITH RECURSIVE`) was measured on the larger pre-fix graph; it
 holds regardless, since it is a relative comparison on the same substrate.
+
+## Does an agent benefit? Kilo Code on ~/Public {#agent-benefit}
+
+The sections above show that `duckdb-code` indexes and queries a large tree quickly. They do not show that a coding agent is better off with it. Its tool descriptions add tokens to every request, and an agent may ignore the tools and fall back on `bash` and file reads. This section measures the effect directly: the same questions put to Kilo Code with and without `duckdb-code`, comparing tokens, latency, and answer quality.
+
+### Method
+
+Each question is asked in two arms that differ only in the MCP servers available:
+
+| Arm | MCP servers |
+| --- | --- |
+| A (baseline) | none |
+| B | `duckdb-code` only, serving a prebuilt index of `~/Public` (`--no-startup-index`, so indexing never counts toward a question's latency) |
+
+Everything else is held constant: the model, the agent, the workspace (`~/Public`), and the global agent instructions. The runs are driven by the `kilo` binary bundled with the VS Code extension (`kilo run`), which is the engine the extension itself runs; a small spot-check in the VS Code panel confirms that the panel behaves the same. Each run sets its MCP servers with a `KILO_CONFIG_CONTENT` overlay, so the global configuration is never edited between runs. The [setup procedure](setup-kilo-code-procedure.md) describes the arm B configuration.
+
+The question set is fixed in advance, and each question has a reference answer and a grading rubric:
+
+- nine structural questions, one per intent `duckdb-code` targets: find by intent, the impact of a change, related tests, similar code across repositories, a repository map, history and co-change, route↔client links, analytics (cycles, dead code), and a cross-repository dependency question;
+- one control question that a single file read answers, where the tools should add nothing;
+- one overhead probe ("reply OK"), which measures the fixed per-request cost of the tool descriptions.
+
+Each question runs three times per arm, every time in a fresh session. The arms alternate (A, B, A, B…), so provider prompt caching and time-of-day effects fall on both.
+
+Figures come from the session database Kilo Code already writes, opened read-only; nothing is read off the screen. For each session:
+
+- __context tokens__: input plus cache reads and writes, summed over the session's requests. They are reported separately from generated tokens because cache reads dominate the context;
+- __generated tokens__: output plus reasoning;
+- __cost__, as reported by the provider;
+- __latency__: wall-clock time from the question to the last completed answer;
+- __steps__: the number of model requests, and the __tool calls__ by name (`duckdb-code_<tool>` versus built-in tools);
+- __correctness__: graded 0, 1, or 2 against the rubric, blind to the arm where practical.
+
+Results are reported as the median per question per arm.
+
+### Conditions
+
+| Condition | Value |
+| --- | --- |
+| Kilo Code | 7.8.18 (VS Code extension and its bundled `kilo` binary) |
+| `duckdb-code` | 261101, run through `uvx` |
+| Model | `amazon-bedrock/global.anthropic.claude-opus-4-6-v1`, pinned for every run |
+| Agent | `ask` (read-only: edits and writes denied, read-only shell commands only), with `duckdb-code_*` allowed in arm B |
+| Workspace | `~/Public`: 14 git repositories plus personal folders |
+| Index | _to be recorded: build time, files, nodes, edges, database size_ |
+| Hardware | _to be recorded_ |
+| Run dates | _to be recorded_ |
+
+The model is pinned because an auto-router can change the model from one request to the next, and that would swamp the difference between the arms. It runs through Bedrock's global inference route, which can process requests outside the EU; the regional `eu.` route for the same model was not reachable from the account used.
+
+The whole of `~/Public` is indexed and visible to the agent in both arms, including private, client, and personal content. Only public repositories (`duckdb-code`, `duckdb-vectors`, `boringsteps`, `hol-guard`, `ileap-mcp`) are cited in the questions and reference answers, and the published results carry metrics and grades only, never answer text.
+
+### Success criteria
+
+Fixed before any run:
+
+- On the structural questions, `duckdb-code` counts as a benefit if median context tokens drop by at least 25%, median latency does not rise, and correctness is no worse than the baseline.
+- The control question and the overhead probe are reported as costs, not hidden: they show what `duckdb-code` adds when it does not help.
+- A cheaper wrong answer is not a gain, so token and latency deltas are only read together with correctness.
+
+### Results
+
+_Pending: the per-question table, aggregate medians and deltas, the measured overhead, a verdict against the success criteria, and the limitations are added here once the runs are complete._
