@@ -29,6 +29,7 @@ import os
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
+from typing import Literal
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -73,40 +74,51 @@ def build_server(settings: Settings | None = None) -> MCPServer:
     server: MCPServer = MCPServer(
         name="duckdb-code",
         description=(
-            "Indexes the structure of a codebase into a local graph and answers "
-            "questions about the relationships across its symbols and files."
+            "Indexes a codebase (code and Markdown) into a local graph and answers "
+            "whole-repo questions an LSP cannot: semantic search by intent, the "
+            "blast radius of a change, cross-boundary links, git history and "
+            "co-change, structural analytics, and whether the index is fresh."
         ),
         instructions=(
             "Use this server when a task needs the structure of the codebase or "
             "the relationships between its symbols and files, rather than reading "
-            "files one at a time. Pick the tool by intent:\n"
+            "files one at a time. Pick the tool by intent.\n"
+            "Orient:\n"
+            "- `overview` — the repo map: modules, entry points, and most central "
+            "symbols, sized to a budget.\n"
             "- `search` — find symbols by intent when you don't know the name "
             "(ranked semantic search); the first tool to reach for.\n"
             "- `find_similar` — find code built like a given symbol or snippet "
             "(house patterns, duplication).\n"
-            "- `overview` — orient in the codebase: its modules, entry points, "
-            "and most central symbols, sized to a budget.\n"
+            "Assess a change:\n"
+            "- `impact` — everything that transitively depends on a symbol or "
+            "file, aggregated by module, with entry points and related tests.\n"
             "- `related_tests` — the tests to run after editing a symbol or "
             "file.\n"
-            "- `history` — git signals around a symbol or file: recent commits, "
-            "co-change partners, and churn.\n"
+            "- `context_for_change` — the symbols a diff touches (working tree or "
+            "a branch) plus their one-hop neighbourhood, for review and PR work.\n"
             "- `links` — the cross-boundary edges of a symbol or file (HTTP "
             "route↔client, Markdown links/embeds/tags) — links an LSP never "
             "sees together.\n"
-            "- `explain` — review the structure around a given symbol or file "
-            "(what it defines, what it depends on, what depends on it).\n"
-            "- `impact` — evaluate the implications of a change by finding "
-            "everything that transitively depends on a symbol or file.\n"
-            "- `report` — explore the metadata of the index itself (languages, "
-            "node/edge kinds and counts, roots).\n"
-            "- `export` — get access to the entire graph as JSON when a whole-"
-            "graph view or offline processing is needed.\n"
+            "- `history` — git signals around a symbol or file: recent commits, "
+            "co-change partners, and churn.\n"
+            "See the whole repo:\n"
+            "- `analytics` — dependency cycles, clusters, dead-code candidates, "
+            "or hotspots (centrality x churn).\n"
+            "Check the index itself:\n"
+            "- `index_status` — the indexed commit, whether the working tree is "
+            "dirty since, and the counts; reach for this first when an answer "
+            "looks stale.\n"
+            "- `report` — the index metadata: languages, node/edge kinds and "
+            "counts, roots.\n"
+            "- `export` — the entire graph as JSON, for a whole-graph view or "
+            "offline processing.\n"
             "Targets are a dotted qualified name (e.g. `pkg.module.Symbol`) or a "
-            "file path. The graph covers code and Markdown pages. Every tool "
-            "returns a single JSON object, and every result carries a path and "
-            "line range so you can hand a precise follow-up to a language "
-            "server: this server answers where in the repo and what's at stake, "
-            "not what exactly is at a cursor position."
+            "file path. Every tool returns a single JSON object, and every symbol "
+            "in a result carries its path and line range so you can hand a "
+            "precise follow-up to a language server: this server answers where "
+            "in the repo and what's at stake, not what exactly is at a cursor "
+            "position."
         ),
     )
 
@@ -118,7 +130,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         retry failed payments?" or "the http client setup" without a known
         identifier. This is the first tool to reach for when orienting in an
         unfamiliar codebase; follow a hit's ``path``/``range`` to the source or
-        to `explain`/`impact` for structure and blast radius.
+        to `impact` for its blast radius.
 
         Arguments:
         - query: a natural-language or keyword description of what you are
@@ -197,8 +209,8 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         - budget: the budget echoed back.
 
         Every node carries node_id, kind, name, qualified_name, path,
-        start_line, end_line, language, so you can follow up with `explain`,
-        `impact`, or the source.
+        start_line, end_line, language, so you can follow up with `impact`,
+        `context_for_change`, or the source.
         """
         store = CodeStore(settings=resolved)
         try:
@@ -217,7 +229,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
 
         Arguments:
         - target: a dotted qualified name (e.g. ``pkg.module.Symbol``) or a file
-          path, resolved the same way as `impact`/`explain`.
+          path, resolved the same way as `impact`.
 
         Returns one JSON object with:
         - symbol: the target string, echoed back.
@@ -248,7 +260,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
 
         Arguments:
         - target: a dotted qualified name (e.g. ``pkg.module.Symbol``) or a file
-          path, resolved the same way as `impact`/`explain`.
+          path, resolved the same way as `impact`.
 
         Returns one JSON object with:
         - symbol: the target string, echoed back.
@@ -280,7 +292,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
 
         Arguments:
         - target: a dotted qualified name (e.g. ``pkg.module.Symbol``) or a file
-          path, resolved the same way as `impact`/`explain`. Either endpoint of
+          path, resolved the same way as `impact`. Either endpoint of
           a cross-boundary link resolves it — asking from the client call or the
           server route both surface the edge.
 
@@ -367,9 +379,10 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         - languages: the sorted list of languages present in the index.
         - files_by_language: a map of language -> indexed file count.
         - nodes_by_kind: a map of node kind (file, module, class, function,
-          import, page, heading, tag) -> count.
+          import, page, heading, tag, route) -> count.
         - edges_by_kind: a map of edge kind (defines, imports, calls, inherits,
-          references, links_to, embeds, tagged) -> count.
+          references, links_to, embeds, tagged, member_of, tests,
+          file_changes_with, calls_route) -> count.
         - roots: the indexed source root(s) — the configured root when set,
           otherwise inferred from the stored file paths.
         - branch / head_commit: the git branch and commit the index was built
@@ -439,7 +452,9 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         return summary
 
     @_described(server)
-    def analytics(kind: str) -> dict:
+    def analytics(
+        kind: Literal["cycles", "clusters", "dead_code", "hotspots"],
+    ) -> dict:
         """Use this for a whole-repo structural view when planning or reviewing.
 
         Reach for this to see the codebase as a whole — not a single symbol —

@@ -7,7 +7,9 @@ object of the right shape.
 """
 
 import asyncio
+import inspect
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -16,6 +18,7 @@ from starlette.applications import Starlette
 from duckdb_code.config import Settings
 from duckdb_code.indexer import index_folder
 from duckdb_code.mcp_server import build_server
+from duckdb_code.models import EDGE_KINDS, NODE_KINDS
 from duckdb_code.store import CodeStore
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample"
@@ -228,12 +231,13 @@ def test_analytics_tool_returns_one_analytics_result(indexed_db):
 
 
 def test_analytics_tool_errors_on_unknown_kind(indexed_db):
-    # A bad kind is a deliberate ToolError: the SDK surfaces it by raising
-    # (with the message preserved), not as a normal result.
+    # `kind` is a Literal, so a bad value is rejected by argument validation
+    # before the tool runs; the SDK surfaces that as a ToolError naming the
+    # allowed values, never as a normal result.
     from mcp.server.mcpserver.exceptions import ToolError
 
     server = _server(indexed_db)
-    with pytest.raises(ToolError, match="unknown analytics kind"):
+    with pytest.raises(ToolError, match="Input should be 'cycles'"):
         asyncio.run(server.call_tool("analytics", {"kind": "bogus"}))
 
 
@@ -260,3 +264,59 @@ def test_context_for_change_tool_returns_the_contract_shape(indexed_db):
     assert payload["base"] == "working-tree"
     assert payload["changed"] == []
     assert payload["neighbourhood"] == []
+
+
+# Discovery strings: what a client reads before it calls any tool. These guard
+# the server instructions and tool descriptions against drifting from the
+# registered tool set (e.g. a tool folded off MCP but still advertised).
+
+_BULLET_TOOL = re.compile(r"^- `([a-z_]+)` —", re.MULTILINE)
+_BACKTICKED = re.compile(r"`+([a-z_]+)`+")
+
+
+def _tools(db):
+    return asyncio.run(_server(db).list_tools())
+
+
+def test_instructions_route_exactly_the_registered_tools(indexed_db):
+    server = _server(indexed_db)
+    registered = {tool.name for tool in _tools(indexed_db)}
+    routed = _BULLET_TOOL.findall(server.instructions)
+    assert len(routed) == len(set(routed)), "a tool is routed twice"
+    assert set(routed) == registered
+
+
+def test_no_discovery_string_names_an_unregistered_tool(indexed_db):
+    # Public CodeStore query methods that are NOT MCP tools (today: explain,
+    # plus index/close) must never be named as if a client could call them.
+    server = _server(indexed_db)
+    tools = _tools(indexed_db)
+    registered = {tool.name for tool in tools}
+    store_methods = {
+        name
+        for name, member in inspect.getmembers(CodeStore, inspect.isfunction)
+        if not name.startswith("_")
+    }
+    unregistered = store_methods - registered
+    assert "explain" in unregistered  # the guard covers the folded tool
+    texts = {
+        "instructions": server.instructions,
+        "description": server.description,
+        **{f"tool:{tool.name}": tool.description for tool in tools},
+    }
+    for where, text in texts.items():
+        named = set(_BACKTICKED.findall(text or ""))
+        assert not (named & unregistered), f"{where} names {named & unregistered}"
+
+
+def test_report_description_lists_every_kind(indexed_db):
+    report = next(tool for tool in _tools(indexed_db) if tool.name == "report")
+    for kind in (*NODE_KINDS, *EDGE_KINDS):
+        assert re.search(rf"\b{kind}\b", report.description), kind
+
+
+def test_analytics_schema_enumerates_kinds(indexed_db):
+    analytics = next(tool for tool in _tools(indexed_db) if tool.name == "analytics")
+    kind = analytics.input_schema["properties"]["kind"]
+    assert kind["enum"] == ["cycles", "clusters", "dead_code", "hotspots"]
+    assert analytics.input_schema["required"] == ["kind"]

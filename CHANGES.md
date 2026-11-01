@@ -6,6 +6,20 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
 
 ## Unreleased
 
+### Fixed
+
+- __MCP discovery strings match the shipped tools.__ The server routing
+  instructions now name exactly the twelve MCP tools, grouped by intent (orient,
+  assess a change, whole repo, the index itself), adding `analytics`,
+  `index_status`, and `context_for_change` and dropping the folded `explain`.
+  Tool descriptions no longer point agents to `explain` (follow-ups go to
+  `impact` / `context_for_change`), the `report` description lists every node
+  and edge kind, the server description mentions semantic search, git signals,
+  and freshness, and the path/range claim is scoped to symbols. `analytics.kind`
+  is now typed as the four allowed values, so the input schema advertises them
+  as an `enum`. Drift tests check the instructions against the registered tools
+  and keep every discovery string from naming a non-MCP store method (#36).
+
 ## v261031
 
 The first release of the renamed `duckdb-code`: the full LSP-complementary MCP
