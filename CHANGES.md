@@ -6,6 +6,13 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
 
 ## Unreleased
 
+## v261101
+
+A discovery-strings fix: what an MCP client reads before calling any tool now
+matches the twelve tools `duckdb-code` actually serves, so agents are routed to
+`analytics`, `index_status`, and `context_for_change` and never to the folded
+`explain`.
+
 ### Fixed
 
 - __MCP discovery strings match the shipped tools.__ The server routing
