@@ -279,14 +279,14 @@ Results are reported as the median per question per arm.
 | `duckdb-code` | 261101, run through `uvx` |
 | Model | `amazon-bedrock/global.anthropic.claude-opus-4-6-v1`, pinned for every run |
 | Agent | `ask` (read-only: edits and writes denied, read-only shell commands only), with `duckdb-code_*` allowed in arm B |
-| Workspace | `~/Public`: 14 git repositories plus personal folders |
-| Index | _to be recorded: build time, files, nodes, edges, database size_ |
-| Hardware | _to be recorded_ |
+| Workspace | `~/Public`: 13 git repositories plus personal folders |
+| Index | 3,965 files indexed (8,468 seen, 4,503 skipped by ignore rules): 2,615 Markdown, 1,263 Python, 84 TypeScript, 3 JavaScript. 71,031 nodes and 279,164 content edges (350,195 with the derived community edges). Built once in 229 s with the default embedding model, peak memory 1.5 GB, database 217 MB |
+| Hardware | Apple M1 Pro, 16 GB RAM, macOS 14.6.1 |
 | Run dates | _to be recorded_ |
 
 The model is pinned because an auto-router can change the model from one request to the next, and that would swamp the difference between the arms. It runs through Bedrock's global inference route, which can process requests outside the EU; the regional `eu.` route for the same model was not reachable from the account used.
 
-The whole of `~/Public` is indexed and visible to the agent in both arms, including private, client, and personal content. Only public repositories (`duckdb-code`, `duckdb-vectors`, `boringsteps`, `hol-guard`, `ileap-mcp`) are cited in the questions and reference answers, and the published results carry metrics and grades only, never answer text.
+The whole of `~/Public` is indexed and visible to the agent in both arms, including private, client, and personal content. Only public repositories (`duckdb-code`, `duckdb-vectors`, `boringsteps`, `ileap-mcp`) are cited in the questions and reference answers, and the published results carry metrics and grades only, never answer text.
 
 ### Success criteria
 
