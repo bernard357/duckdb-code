@@ -325,12 +325,23 @@ def plan_runs(questions: list[str], reps: int) -> list[PlannedRun]:
 def arm_overlay(arm: str, *, db: str, uvx: str, spec: str = DUCKDB_CODE_SPEC) -> dict:
     """The KILO_CONFIG_CONTENT overlay that sets one arm's MCP servers.
 
-    Both arms disable the stale ``duckdb-graph`` server. Arm B adds
-    duckdb-code, serving a prebuilt index without re-indexing on startup, and
-    lets the read-only ``ask`` agent call its tools without a prompt (a
+    The overlay is deep-merged over the global Kilo configuration, so each
+    arm states every server it cares about rather than relying on what the
+    global file holds. Both arms disable the stale ``duckdb-graph`` server.
+    Arm A also disables ``duckdb-code``, which the setup procedure adds to the
+    global file and would otherwise leak into the baseline (a bare
+    ``enabled: false`` entry is accepted even where no global entry exists).
+    Arm B sets ``duckdb-code`` in full, serving a prebuilt index without
+    re-indexing on startup; its ``command`` replaces any global one. It also
+    lets the read-only ``ask`` agent call the tools without a prompt (a
     non-interactive run otherwise rejects them).
     """
-    overlay: dict = {"mcp": {"duckdb-graph": {"enabled": False}}}
+    overlay: dict = {
+        "mcp": {
+            "duckdb-graph": {"enabled": False},
+            "duckdb-code": {"enabled": False},
+        }
+    }
     if arm == "B":
         overlay["mcp"]["duckdb-code"] = {
             "type": "local",

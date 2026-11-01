@@ -203,8 +203,10 @@ def test_overlays_differ_only_in_the_duckdb_code_server(bench):
     # Both arms disable the stale duckdb-graph server.
     assert a["mcp"]["duckdb-graph"] == {"enabled": False}
     assert b["mcp"]["duckdb-graph"] == {"enabled": False}
-    assert "duckdb-code" not in a["mcp"]
-    assert "permission" not in a
+    # Arm A disables duckdb-code explicitly: a global entry (as the setup
+    # procedure adds) would otherwise leak into the no-MCP baseline.
+    assert a["mcp"]["duckdb-code"] == {"enabled": False}
+    assert "agent" not in a
     server = b["mcp"]["duckdb-code"]
     assert server["type"] == "local"
     assert server["enabled"] is True

@@ -139,17 +139,26 @@ With a persistent install, make the first element of `command` the absolute `duc
 
 ## 5. Let the agent call the tools without prompting {#permissions}
 
-By default Kilo Code asks for permission before each MCP tool call. In the VS Code panel you can approve the prompts one by one; a non-interactive `kilo run` rejects them, and the read-only `ask` agent asks too. Since every `duckdb-code` tool only reads the index, allow them once in the same configuration file:
+By default Kilo Code asks for permission before each MCP tool call. In the VS Code panel you can approve the prompts one by one; a non-interactive `kilo run` rejects them, and the read-only `ask` agent asks too. Since every `duckdb-code` tool only reads the index, allow them in the same configuration file, once at top level and once for the `ask` agent:
 
 ```jsonc
 {
   "permission": {
     "duckdb-code_*": "allow"
+  },
+  "agent": {
+    "ask": {
+      "permission": {
+        "duckdb-code_*": "allow"
+      }
+    }
   }
 }
 ```
 
-The rule applies to every agent. To grant it to one agent only, nest it as `"agent": { "ask": { "permission": { "duckdb-code_*": "allow" } } }`. It allows only the `duckdb-code` tools; an agent that cannot edit files still cannot.
+The top-level rule covers the agents that read your permissions as they are, such as `code`. The read-only `ask` agent applies its own rules after yours and sets MCP tools back to "ask", so it needs the rule again at agent level. If your configuration already has a `permission` block, add the line inside it rather than a second block.
+
+The rule allows only the `duckdb-code` tools; an agent that cannot edit files still cannot. To check which rule wins for an agent, run `kilo debug agent <name>`: the last `duckdb-code_*` entry in its permission list is the one that applies.
 
 ## 6. Verify {#verify}
 
@@ -216,7 +225,7 @@ __Kilo Code does not list the server, or it shows as failed.__ Run the configure
 
 __`uvx` or `duckdb-code` not found.__ VS Code started without your shell's `PATH`. Use the absolute path from `command -v uvx` (or `command -v duckdb-code`) as the first element of `command`.
 
-__Tool calls are rejected.__ The permission rule from step 5 is missing. Without it, a non-interactive `kilo run` stops with "auto-rejected permission", and the panel prompts on every call.
+__Tool calls are rejected.__ The permission rule from step 5 is missing, or, with the `ask` agent, present only at top level. Without it, a non-interactive `kilo run` stops with "auto-rejected permission", and the panel prompts on every call. `kilo debug agent <name>` shows which `duckdb-code_*` rule applies.
 
 __The agent never answers, whatever the question.__ Check that Kilo Code's model is reachable before blaming the MCP server: `kilo roll-call "<provider>/<model>"` sends a one-word prompt and reports access. On Amazon Bedrock, a regional inference route (for example `eu.`) can be unavailable to an account while the `global.` route for the same model works.
 
