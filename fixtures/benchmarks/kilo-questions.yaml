@@ -1,0 +1,242 @@
+# Question set for the Kilo Code agent-benefit benchmark.
+#
+# Each question is put to Kilo Code twice: without any MCP server (arm A) and
+# with duckdb-code serving an index of the whole ~/Public tree (arm B). The
+# method and success criteria are in documentation/performance-workbook.md.
+#
+# Confidentiality: ~/Public also holds private, client, and personal content.
+# Questions and reference answers cite only the public repositories listed in
+# `pinned_commits`; results publish metrics and grades, never answer text.
+#
+# Reference answers hold at the pinned commits. Re-ground them before running
+# against a different commit of any of these repositories.
+
+version: 1
+workspace: ~/Public
+grounded_on: 2026-11-01
+pinned_commits:
+  duckdb-code: 0664ad4e5426
+  duckdb-vectors: 577427a9e810
+  boringsteps: 8cc1d855a5b9
+  hol-guard: 326040dab79f
+  ileap-mcp: 9c83e44afb74
+
+questions:
+  - id: q01
+    category: find-by-intent
+    repo: duckdb-vectors
+    prompt: >-
+      In duckdb-vectors, where are the vector-similarity ranking and the
+      keyword (BM25) ranking combined into a single result list, and how are
+      they combined?
+    expected_tools: [search]
+    reference_answer: >-
+      In `VectorStore.query` in `src/duckdb_vectors/store.py`. It takes the
+      vector ranking from `_vector_ranking` and the BM25 ranking from
+      `_text_ranking`, then fuses them with Reciprocal Rank Fusion, scoring
+      each chunk by the sum of 1 / (RRF_K + rank) with `RRF_K = 60`.
+      `query_vectors` is the vector-only path.
+    rubric:
+      "2": Names `VectorStore.query` in `src/duckdb_vectors/store.py` and Reciprocal Rank Fusion.
+      "1": Names the right file or Reciprocal Rank Fusion, but not the method.
+      "0": Anything else.
+
+  - id: q02
+    category: impact
+    repo: duckdb-code
+    prompt: >-
+      In duckdb-code, I want to change the signature of
+      `CodeStore._resolve_target`. Which functions call it directly and would
+      need updating?
+    expected_tools: [impact]
+    reference_answer: >-
+      Six `CodeStore` methods in `src/duckdb_code/store.py` call it directly:
+      `explain`, `find_similar`, `history`, `impact`, `links`, and
+      `related_tests`.
+    rubric:
+      "2": Lists all six methods and nothing outside `CodeStore`.
+      "1": Lists at least four of the six, or all six plus unrelated callers.
+      "0": Fewer than four, or mostly wrong.
+    notes: >-
+      `impact` at depth 1 also returns everything that depends on the
+      enclosing class, module, and file (about 50 nodes, including CLI verbs
+      and tests), because a method target seeds its container chain. The
+      agent has to narrow that down to the direct callers.
+
+  - id: q03
+    category: related-tests
+    repo: duckdb-vectors
+    prompt: >-
+      In duckdb-vectors, I am about to change the Markdown chunker. Which test
+      files should I run afterwards?
+    expected_tools: [related_tests]
+    reference_answer: >-
+      `tests/test_chunkers.py` and `tests/test_composite_chunker.py` exercise
+      `MarkdownChunker` directly (the composite chunker dispatches Markdown
+      files to it). `tests/test_store.py` covers it indirectly when indexing
+      Markdown content.
+    rubric:
+      "2": Names `tests/test_chunkers.py` and `tests/test_composite_chunker.py`.
+      "1": Names one of the two.
+      "0": Neither, or only unrelated tests.
+    notes: >-
+      `related_tests` on `src/duckdb_vectors/chunkers/markdown.py` also lists
+      `test_pdf_chunker.py`, `test_pdf_fixtures.py`, and `test_ranking_sql.py`,
+      which do not exercise the Markdown chunker.
+
+  - id: q04
+    category: similar-code
+    repo: duckdb-vectors
+    prompt: >-
+      duckdb-code builds its MCP server in `build_server` in
+      `src/duckdb_code/mcp_server.py`. Where does duckdb-vectors do the same
+      thing?
+    expected_tools: [find_similar, search]
+    reference_answer: >-
+      In `build_server` in `src/duckdb_vectors/mcp_server.py`, which also
+      constructs an `MCPServer` (from `mcp.server.mcpserver`) and registers
+      the server's tools.
+    rubric:
+      "2": Names `build_server` in `src/duckdb_vectors/mcp_server.py`.
+      "1": Names the right file, or the right function without its path.
+      "0": Anything else.
+
+  - id: q05
+    category: repo-map
+    repo: ileap-mcp
+    prompt: >-
+      Give me a map of the ileap-mcp repository: its modules, what each one
+      is for, and its entry points.
+    expected_tools: [overview]
+    reference_answer: >-
+      Package `ileap_mcp` with five modules: `server.py` (the FastMCP server,
+      Streamable HTTP, stdio for local development), `app.py` (the production
+      ASGI entry point, a Starlette app), `client.py` (the async HTTP client
+      for an iLEAP / PACT endpoint), `config.py` (pydantic-settings
+      configuration), and `models.py` (Pydantic models for the PACT / iLEAP
+      wire shapes); tests in `tests/`. Entry points: the `ileap-mcp` console
+      script, which runs `ileap_mcp.server:main`, and the ASGI app in
+      `ileap_mcp/app.py`.
+    rubric:
+      "2": All five modules with their roles, plus both entry points.
+      "1": At least four modules with roles, or all modules but no entry point.
+      "0": Fewer than four modules, or wrong roles.
+    notes: >-
+      `overview` has no path filter: on an index of the whole tree it maps
+      every repository at once, dominated by the large hol-guard repository.
+
+  - id: q06
+    category: history-co-change
+    repo: duckdb-code
+    prompt: >-
+      In duckdb-code, which files usually change together with
+      `src/duckdb_code/store.py`?
+    expected_tools: [history]
+    reference_answer: >-
+      Over its 15 commits, `store.py` changed most often with `CHANGES.md`
+      (15), `src/duckdb_code/models.py` (11), and then
+      `src/duckdb_code/mcp_server.py`, `src/duckdb_code/cli.py`,
+      `tests/test_mcp_server.py`, and `README.md` (10 each).
+    rubric:
+      "2": Names `models.py` and at least two of `mcp_server.py`, `cli.py`, `tests/test_mcp_server.py`.
+      "1": Names `models.py` or `CHANGES.md` only.
+      "0": Anything else.
+    notes: >-
+      `~/Public` is not itself a git repository, so on an index rooted there
+      `history` returns no commits, co-change partners, or churn. The agent
+      has to fall back on `git log` in arm B as well as arm A.
+
+  - id: q07
+    category: links
+    repo: duckdb-vectors
+    prompt: >-
+      In the duckdb-vectors documentation, which pages link to the
+      performance guide?
+    expected_tools: [links]
+    reference_answer: >-
+      Three pages in `documentation/` link to `performance-guide.md`:
+      `duckdb-vectors-guide.md`, `duckdb-vectors-primitive.md`, and
+      `index.md`. `README.md` mentions it only through an absolute site URL.
+    rubric:
+      "2": Names all three documentation pages.
+      "1": Names two of the three.
+      "0": One or none.
+    notes: >-
+      Substitute for the planned route↔client question: no public repository
+      yields a `calls_route` edge. duckdb-code's three route matches are
+      docstrings in its own extractors, and hol-guard's `fetch` client calls
+      target a server that is not a Flask, FastAPI, or Express app.
+
+  - id: q08
+    category: analytics-cycles
+    repo: duckdb-code
+    prompt: >-
+      Are there any dependency cycles in duckdb-code's source code under
+      `src/`? Name the functions involved.
+    expected_tools: [analytics]
+    reference_answer: >-
+      One genuine cycle: the mutual recursion between `_PythonBuilder`'s walk
+      methods in `src/duckdb_code/extractors/python.py` (`_walk_body`,
+      `_walk_statement`, `_handle_decorated`, `_handle_class`,
+      `_handle_function`, `_walk_function_body`).
+    rubric:
+      "2": Identifies the `_PythonBuilder` walk recursion and does not present a false cycle as real.
+      "1": Identifies the walk recursion but also reports a false cycle as real.
+      "0": Misses the walk recursion.
+    notes: >-
+      `analytics cycles` also reports two false cycles caused by
+      name-suffix matching: `links` ↔ `_cross_boundary_edges` in `store.py`
+      (a local list named `links`) and `_emit_calls_and_refs` across the
+      Python and JavaScript extractors (two unrelated methods with the same
+      name, each only calling itself). Flagging them as false is a plus.
+
+  - id: q09
+    category: cross-repo-dependency
+    repo: all
+    prompt: >-
+      Among duckdb-code, duckdb-vectors, boringsteps, hol-guard, and
+      ileap-mcp, which repositories build an MCP server, and which library
+      and class does each one use?
+    expected_tools: [search, find_similar]
+    reference_answer: >-
+      duckdb-code and duckdb-vectors use the official `mcp` SDK's `MCPServer`
+      (`mcp.server.mcpserver`), in their `mcp_server.py` modules. hol-guard
+      uses the official SDK's `FastMCP` (`mcp.server.fastmcp`), in
+      `src/codex_plugin_scanner/guard/mcp/server.py`. ileap-mcp uses the
+      standalone `fastmcp` package's `FastMCP`, in `ileap_mcp/server.py`,
+      served behind a Starlette ASGI app. boringsteps builds no MCP server.
+    rubric:
+      "2": All four MCP repositories with the right library and class, and boringsteps excluded.
+      "1": Three of the four right.
+      "0": Two or fewer right.
+
+  - id: q10
+    category: control
+    repo: boringsteps
+    prompt: >-
+      What does the `build` target of the boringsteps Makefile run?
+    expected_tools: []
+    reference_answer: >-
+      It runs `python3 scripts/build_posts.py`, then `npm run build`, then
+      touches `$(DIST)`.
+    rubric:
+      "2": All three steps, in order.
+      "1": Two of the three.
+      "0": Anything else.
+    notes: >-
+      Control: reading one file answers it, so duckdb-code should add nothing
+      but the cost of its tool descriptions.
+
+  - id: q11
+    category: overhead-probe
+    repo: none
+    prompt: Reply with the single word OK.
+    expected_tools: []
+    reference_answer: OK
+    rubric:
+      "2": Replies OK.
+      "1": Replies OK with extra text.
+      "0": Anything else.
+    notes: >-
+      Measures the fixed per-request cost of the tool descriptions: the only
+      difference between the arms is the MCP tool list.
