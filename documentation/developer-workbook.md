@@ -117,7 +117,7 @@ extras (ruff, mypy, pytest) for running the suite and the linters. It is
 distinct from the __end-user__ install story, which is `uvx duckdb-code` (or
 `uv tool install duckdb-code`) and pulls only the runtime dependencies on
 demand — see the [README](https://github.com/bernard357/duckdb-code#install-and-run)
-and the [Kilo Code runbook](setup-kilo-code-runbook.md). Reach for `make setup`
+and the [Kilo Code setup procedure](setup-kilo-code-procedure.md). Reach for `make setup`
 when you are changing the package, not when you are only running it.
 
 ## What does the lint cover?

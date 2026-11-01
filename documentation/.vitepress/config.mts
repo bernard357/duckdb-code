@@ -64,11 +64,11 @@ export default withMermaid(
           ],
         },
         {
-          text: 'Runbooks',
+          text: 'Procedures',
           items: [
             {
-              text: 'Kilo Code MCP setup',
-              link: '/setup-kilo-code-runbook',
+              text: 'Set up Kilo Code',
+              link: '/setup-kilo-code-procedure',
             },
           ],
         },
