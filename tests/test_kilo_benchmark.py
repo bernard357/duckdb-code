@@ -232,7 +232,7 @@ def test_overlays_differ_only_in_the_duckdb_code_server(bench):
     server = b["mcp"]["duckdb-code"]
     assert server["type"] == "local"
     assert server["enabled"] is True
-    assert server["command"][:2] == ["/opt/uvx", "duckdb-code==261101"]
+    assert server["command"][:2] == ["/opt/uvx", "duckdb-code==261102.221350"]
     assert server["command"][2:] == [
         "mcp",
         "--db",

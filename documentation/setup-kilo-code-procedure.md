@@ -11,7 +11,7 @@ The agent gains twelve read-only tools, grouped the way the server's own routing
 | See the whole repo | `analytics` (cycles, clusters, dead-code candidates, hotspots) |
 | Check the index | `index_status` (freshness), `report` (metadata), `export` (the whole graph) |
 
-The steps were checked on Kilo Code 7.8.18 and `duckdb-code` 261101.
+The steps were checked on Kilo Code 7.8.18 and `duckdb-code` 261102.221350.
 
 - [1. Choose the folder and database](#paths)
 - [2. Check that duckdb-code runs](#check)
@@ -47,7 +47,7 @@ With [uv](https://docs.astral.sh/uv/) there is nothing to install: `uvx` fetches
 $ uvx duckdb-code --help
 ```
 
-Pin a version (for example `uvx duckdb-code==261101`) when you want every start to run the same build; leave it unpinned to pick up new releases.
+Pin a version (for example `uvx duckdb-code==261102.221350`) when you want every start to run the same build; leave it unpinned to pick up new releases.
 
 Note the absolute path of `uvx`. VS Code does not always inherit your shell's `PATH`, so the Kilo Code configuration should name it in full:
 

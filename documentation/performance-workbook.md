@@ -334,11 +334,11 @@ Results are reported as the median per question per arm.
 | Condition | Value |
 | --- | --- |
 | Kilo Code | 7.8.18 (VS Code extension and its bundled `kilo` binary) |
-| `duckdb-code` | 261101, run through `uvx` |
+| `duckdb-code` | 261102.221350, run through `uvx` (a first pass of one repetition ran on 261101, before #38–#42) |
 | Model | `amazon-bedrock/global.anthropic.claude-opus-4-6-v1`, pinned for every run |
 | Agent | `ask` (read-only: edits and writes denied, read-only shell commands only), with `duckdb-code_*` allowed in arm B |
-| Workspace | `~/Public`: 13 git repositories plus personal folders |
-| Index | 3,965 files indexed (8,468 seen, 4,503 skipped by ignore rules): 2,615 Markdown, 1,263 Python, 84 TypeScript, 3 JavaScript. 71,031 nodes and 279,164 content edges (350,195 with the derived community edges). Built once in 229 s with the default embedding model, peak memory 1.5 GB, database 217 MB |
+| Workspace | `~/Public`: 17 git repositories (13 at the top level, 4 nested under `_obsolete/` and `temp/`) plus personal folders |
+| Index | 3,980 files indexed (8,496 seen, 4,516 skipped by ignore rules): 2,617 Markdown, 1,276 Python, 84 TypeScript, 3 JavaScript. 71,624 nodes and 235,613 content edges (308,829 with the derived community and co-change edges), schema v7. Built once in 44 s with the default embedding model, `uvx` start-up included (31 s of indexing and 1.7 GB peak memory in the #42 profile), database 225 MB |
 | Hardware | Apple M1 Pro, 16 GB RAM, macOS 14.6.1 |
 | Run dates | _to be recorded_ |
 
