@@ -6,6 +6,12 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
 
 ## Unreleased
 
+## v261102.221350
+
+A performance release: every table of the index is bulk-loaded as numpy
+columns, so a full index of `~/Public` takes 31 s instead of 243 s with the
+same stored rows.
+
 ### Changed
 
 - __Indexing is about eight times faster.__ Every bulk write is loaded as numpy
