@@ -81,12 +81,20 @@ entry points, and the most central symbols, ranked by centrality and sized to a
 token `budget`. Returns
 `{modules: […], entry_points: [{id, path, range}], central_symbols: [{id, path, range, rank}], budget}`.
 
-### `impact(symbol, depth=…)`
+### `impact(symbol, depth=…, limit=50)`
 
 Transitive reverse-dependency set — "what breaks if I change this?" — in one
 call, aggregated by module with the affected entry points and the involved
 tests. Returns
-`{target, resolved: [node], ambiguous, affected: [{node, distance, resolution}], affected_by_module: {…}, affected_entry_points: […], related_tests: […], affected_files: […]}`.
+`{target, resolved: [node], ambiguous, affected: [{node, distance, resolution}], affected_by_module: {…}, affected_entry_points: […], related_tests: […], affected_files: […], limit, truncated, total_affected, total_affected_files, total_affected_modules, total_affected_entry_points, total_related_tests}`.
+
+The response is bounded so a high fan-in target cannot overflow the MCP
+transport. `limit` (default 50) caps each list: the nearest `affected` nodes,
+the most-affected modules in `affected_by_module` (with their full counts) and
+their `affected_files`, the first entry points and the first related tests.
+The `total_*` fields carry the uncapped counts, and `truncated` is true when
+anything was cut. Raise `limit`, or narrow with `depth`, to see more. The CLI
+`impact` verb and the Python `CodeStore.impact()` are unbounded by default.
 
 ### `links(symbol)`
 

@@ -104,9 +104,37 @@ def test_impact_tool_returns_one_impact_result(indexed_db):
         "affected_by_module",
         "affected_entry_points",
         "related_tests",
+        "limit",
+        "truncated",
+        "total_affected",
+        "total_affected_files",
+        "total_affected_modules",
+        "total_affected_entry_points",
+        "total_related_tests",
     }
     affected_qns = {item["node"]["qualified_name"] for item in payload["affected"]}
     assert "payments.charge.Charge" in affected_qns
+
+
+def test_impact_tool_applies_a_default_limit(indexed_db):
+    # Over MCP the result is bounded by default, so a wide blast radius cannot
+    # produce a response too large for the client.
+    from duckdb_code.mcp_server import IMPACT_DEFAULT_LIMIT
+
+    payload = _result(indexed_db, "impact", {"target": "payments.charge.Base"})
+    assert payload["limit"] == IMPACT_DEFAULT_LIMIT
+    assert len(payload["affected"]) <= IMPACT_DEFAULT_LIMIT
+    assert payload["total_affected"] >= len(payload["affected"])
+
+
+def test_impact_tool_limit_can_be_set_per_call(indexed_db):
+    payload = _result(
+        indexed_db, "impact", {"target": "payments.charge.Base", "limit": 1}
+    )
+    assert payload["limit"] == 1
+    assert len(payload["affected"]) == 1
+    assert payload["total_affected"] > 1
+    assert payload["truncated"] is True
 
 
 def test_explain_is_not_advertised_over_mcp(indexed_db):

@@ -132,6 +132,36 @@ def _is_test_path(path: str) -> bool:
     return ".test." in pure.name or ".spec." in pure.name
 
 
+def _cap_impact(result: ImpactResult, limit: int) -> ImpactResult:
+    """Cap every list of an ``impact`` result to ``limit`` items.
+
+    ``affected`` is already nearest-first, so its head is the closest reach.
+    ``affected_by_module`` is most-affected-first: the head modules keep their
+    full counts, and ``affected_files`` becomes exactly their paths, sorted,
+    rather than an alphabetical cut of every file. The entry points and tests
+    keep their first items in order. The ``total_*`` fields, set by the caller
+    on the full result, are left as they are.
+    """
+    modules = dict(list(result.affected_by_module.items())[:limit])
+    capped = result.model_copy(
+        update={
+            "affected": result.affected[:limit],
+            "affected_by_module": modules,
+            "affected_files": sorted(modules),
+            "affected_entry_points": result.affected_entry_points[:limit],
+            "related_tests": result.related_tests[:limit],
+        }
+    )
+    capped.truncated = (
+        len(capped.affected) < result.total_affected
+        or len(capped.affected_files) < result.total_affected_files
+        or len(capped.affected_by_module) < result.total_affected_modules
+        or len(capped.affected_entry_points) < result.total_affected_entry_points
+        or len(capped.related_tests) < result.total_related_tests
+    )
+    return capped
+
+
 def _strongly_connected_components(
     adjacency: dict[str, list[str]],
 ) -> list[list[str]]:
@@ -623,7 +653,9 @@ class CodeStore:
     def _order_key(self, node: Node) -> tuple[str, int, str]:
         return (node.path, node.start_line, node.node_id)
 
-    def impact(self, target: str, *, depth: int | None = None) -> ImpactResult:
+    def impact(
+        self, target: str, *, depth: int | None = None, limit: int | None = None
+    ) -> ImpactResult:
         """Return the transitive reverse-dependency set of ``target``.
 
         Resolves ``target`` (path or symbol), seeds its container chain once
@@ -635,7 +667,13 @@ class CodeStore:
         only through it inherit best_effort (fix 2). Seeds are distance 0 and
         are never emitted, so every :class:`ImpactNode` has ``distance >= 1``;
         ``depth=0`` yields ``affected=[]``.
+
+        ``limit`` caps every list in the result (see :class:`ImpactResult`);
+        the totals and per-module counts are computed on the full set first.
+        ``None`` returns everything. A non-positive ``limit`` is rejected.
         """
+        if limit is not None and limit < 1:
+            raise ValueError(f"limit must be at least 1, got {limit}")
         resolved, ambiguous, origin = self._resolve_target(target)
         if not resolved:
             return ImpactResult(
@@ -644,6 +682,7 @@ class CodeStore:
                 ambiguous=False,
                 affected=[],
                 affected_files=[],
+                limit=limit,
             )
 
         node_by_id = {node.node_id: node for node in resolved}
@@ -743,7 +782,7 @@ class CodeStore:
         # change): the sources of `tests` edges into that id set.
         related_tests = self._tests_reaching(affected_ids | seed_ids)
 
-        return ImpactResult(
+        result = ImpactResult(
             target=target,
             resolved=resolved_sorted,
             ambiguous=ambiguous,
@@ -752,7 +791,14 @@ class CodeStore:
             affected_by_module=affected_by_module,
             affected_entry_points=affected_entry_points,
             related_tests=related_tests,
+            limit=limit,
+            total_affected=len(affected),
+            total_affected_files=len(affected_files),
+            total_affected_modules=len(affected_by_module),
+            total_affected_entry_points=len(affected_entry_points),
+            total_related_tests=len(related_tests),
         )
+        return result if limit is None else _cap_impact(result, limit)
 
     def _entry_points_among(self, node_ids: set[str]) -> list[Node]:
         """Return the nodes in ``node_ids`` with zero inbound dependency edges.

@@ -43,6 +43,13 @@ from duckdb_code.store import CodeStore
 # and inline is a bounded convenience for small graphs only.
 _INLINE_ELEMENT_CAP = 2000
 
+# The default cap on each list in an `impact` result served over MCP. Without
+# it, a widely used target returned 10,919 nodes (11.8 MB of JSON) and the MCP
+# client dropped the connection. At about 1.4 KB per unit of limit across the
+# capped lists, 50 keeps a response near 70 KB. The store and the CLI stay
+# unbounded unless asked.
+IMPACT_DEFAULT_LIMIT = 50
+
 
 def _described(server: MCPServer) -> Callable:
     """Register a tool whose client description is its own cleaned docstring.
@@ -319,7 +326,9 @@ def build_server(settings: Settings | None = None) -> MCPServer:
             store.close()
 
     @_described(server)
-    def impact(target: str, depth: int | None = None) -> dict:
+    def impact(
+        target: str, depth: int | None = None, limit: int = IMPACT_DEFAULT_LIMIT
+    ) -> dict:
         """Use this to evaluate the implications of a change.
 
         Returns the transitive reverse-dependency set of a symbol or file path:
@@ -333,6 +342,10 @@ def build_server(settings: Settings | None = None) -> MCPServer:
           then by a best-effort suffix match.
         - depth: optional cap on how many reverse hops to walk. ``depth=0``
           yields no affected nodes; omit it to walk the full closure.
+        - limit: the most items returned in each list (default 50). A change to
+          a widely used symbol can reach thousands of nodes; the totals below
+          still describe the whole result, so raise ``limit`` only when you
+          need the full lists.
 
         Returns one JSON object with:
         - target: the target string, echoed back.
@@ -356,12 +369,21 @@ def build_server(settings: Settings | None = None) -> MCPServer:
           roots (nothing depends on them) — the outermost reach of the change.
         - related_tests: the test symbols that exercise any affected or seed
           symbol (via a `tests` edge) — what to run after the change.
+        - limit / truncated: the cap applied to each list, and whether any list
+          was cut by it. When truncated, ``affected`` keeps the nearest nodes
+          and ``affected_by_module`` the most affected modules (with their full
+          counts), and ``affected_files`` lists exactly those modules.
+        - total_affected, total_affected_files, total_affected_modules,
+          total_affected_entry_points, total_related_tests: the size of each
+          list before capping.
 
         An unresolved target returns empty ``resolved`` and ``affected``.
         """
         store = CodeStore(settings=resolved)
         try:
-            return store.impact(target, depth=depth).model_dump()
+            return store.impact(target, depth=depth, limit=limit).model_dump()
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
         finally:
             store.close()
 

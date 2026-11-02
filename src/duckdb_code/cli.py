@@ -208,12 +208,15 @@ def impact(
     depth: int | None = typer.Option(
         None, "--depth", help="Maximum reverse-hop distance."
     ),
+    limit: int | None = typer.Option(
+        None, "--limit", min=1, help="Most items per list (default: all)."
+    ),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
     """Report the transitive reverse-dependency set of a target."""
     store = CodeStore(db_path=db)
     try:
-        result = store.impact(target, depth=depth)
+        result = store.impact(target, depth=depth, limit=limit)
     finally:
         store.close()
     if as_json:
@@ -222,7 +225,12 @@ def impact(
         if result.ambiguous:
             typer.echo(f"(ambiguous: {len(result.resolved)} resolved nodes)")
         typer.echo(f"Resolved      : {len(result.resolved)} node(s)")
-        typer.echo(f"Affected      : {len(result.affected)} node(s)")
+        shown = len(result.affected)
+        total = result.total_affected
+        typer.echo(
+            f"Affected      : {shown} node(s)"
+            + (f" of {total} (truncated by --limit {limit})" if shown < total else "")
+        )
         for item in result.affected:
             typer.echo(
                 f"  {item.distance}  {item.resolution}  {item.node.kind}  "

@@ -9,6 +9,8 @@ contract.
 
 from pathlib import Path
 
+import pytest
+
 from duckdb_code.indexer import index_folder
 from duckdb_code.store import CodeStore
 
@@ -530,3 +532,94 @@ def test_related_tests_finds_reaching_tests(tmp_path):
     assert any("test_money" in p for p in test_paths)
     assert all(t.reason == "reaches" for t in result.tests)
     store.close()
+
+
+def _fan_in_store(tmp_path) -> CodeStore:
+    """A tree where `core.base` is called from five modules, two levels deep.
+
+    Each `user_<i>.py` defines `f_<i>` (calls `base`, distance 1) and `g_<i>`
+    (calls `f_<i>`, distance 2), so `impact("core.base")` reaches ten functions
+    across five modules: enough breadth to cap.
+    """
+    tree = tmp_path / "fan"
+    tree.mkdir()
+    (tree / "core.py").write_text("def base():\n    return 1\n", encoding="utf-8")
+    for i in range(5):
+        (tree / f"user_{i}.py").write_text(
+            "from core import base\n\n\n"
+            f"def f_{i}():\n    return base()\n\n\n"
+            f"def g_{i}():\n    return f_{i}()\n",
+            encoding="utf-8",
+        )
+    store = CodeStore(db_path=str(tmp_path / "fan.duckdb"), root=str(tree))
+    index_folder(store, tree)
+    return store
+
+
+def test_impact_without_limit_is_complete_and_untruncated(tmp_path):
+    store = _fan_in_store(tmp_path)
+    full = store.impact("core.base")
+    store.close()
+    assert full.truncated is False
+    assert full.limit is None
+    assert full.total_affected == len(full.affected)
+    assert full.total_affected_files == len(full.affected_files)
+    assert full.total_affected_modules == len(full.affected_by_module)
+    assert full.total_affected_entry_points == len(full.affected_entry_points)
+    assert full.total_related_tests == len(full.related_tests)
+    assert {"user_0.f_0", "user_0.g_0"} <= {
+        a.node.qualified_name for a in full.affected
+    }
+
+
+def test_impact_limit_caps_every_list_and_keeps_full_totals(tmp_path):
+    store = _fan_in_store(tmp_path)
+    full = store.impact("core.base")
+    capped = store.impact("core.base", limit=3)
+    store.close()
+    assert capped.truncated is True
+    assert capped.limit == 3
+    # The nearest affected nodes are kept: the list is already ordered by
+    # distance, and every distance-1 caller precedes every distance-2 one.
+    assert len(capped.affected) == 3
+    assert [a.node.node_id for a in capped.affected] == [
+        a.node.node_id for a in full.affected[:3]
+    ]
+    assert all(a.distance == 1 for a in capped.affected)
+    # The most affected modules are kept, with their full per-module counts,
+    # and the files are exactly those modules, still sorted.
+    assert len(capped.affected_by_module) <= 3
+    assert list(capped.affected_by_module) == list(full.affected_by_module)[:3]
+    for path, count in capped.affected_by_module.items():
+        assert count == full.affected_by_module[path]
+    assert capped.affected_files == sorted(capped.affected_by_module)
+    assert len(capped.affected_entry_points) <= 3
+    assert len(capped.related_tests) <= 3
+    # Totals describe the whole result, before capping.
+    assert capped.total_affected == len(full.affected)
+    assert capped.total_affected_files == len(full.affected_files)
+    assert capped.total_affected_modules == len(full.affected_by_module)
+    assert capped.total_affected_entry_points == len(full.affected_entry_points)
+    assert capped.total_related_tests == len(full.related_tests)
+
+
+def test_impact_limit_above_every_size_is_not_truncated(tmp_path):
+    store = _fan_in_store(tmp_path)
+    full = store.impact("core.base")
+    roomy = store.impact("core.base", limit=1_000)
+    store.close()
+    assert roomy.truncated is False
+    assert roomy.limit == 1_000
+    assert [a.node.node_id for a in roomy.affected] == [
+        a.node.node_id for a in full.affected
+    ]
+    assert roomy.affected_files == full.affected_files
+
+
+def test_impact_rejects_a_non_positive_limit(tmp_path):
+    store = _fan_in_store(tmp_path)
+    try:
+        with pytest.raises(ValueError, match="limit"):
+            store.impact("core.base", limit=0)
+    finally:
+        store.close()

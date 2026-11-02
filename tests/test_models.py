@@ -127,12 +127,27 @@ def test_impact_result_defaults_and_fields():
         "affected_by_module",
         "affected_entry_points",
         "related_tests",
+        "limit",
+        "truncated",
+        "total_affected",
+        "total_affected_files",
+        "total_affected_modules",
+        "total_affected_entry_points",
+        "total_related_tests",
     }
     assert result.ambiguous is False
     # The new aggregation fields default to empty.
     assert result.affected_by_module == {}
     assert result.affected_entry_points == []
     assert result.related_tests == []
+    # An unbounded result carries no limit and is never truncated.
+    assert result.limit is None
+    assert result.truncated is False
+    assert result.total_affected == 0
+    assert result.total_affected_files == 0
+    assert result.total_affected_modules == 0
+    assert result.total_affected_entry_points == 0
+    assert result.total_related_tests == 0
 
 
 def test_explanation_fields():

@@ -133,6 +133,15 @@ class ImpactResult(BaseModel):
     roots (nothing depends on them) — the outermost things a change reaches.
     ``related_tests`` are the test symbols that exercise any affected (or seed)
     symbol via a ``tests`` edge — what to run after the change.
+
+    A wide blast radius can run to thousands of nodes, too large for an MCP
+    response, so the lists can be capped. ``limit`` is the cap that was
+    applied (``None`` for the full result). With a cap, ``affected`` keeps the
+    nearest nodes, ``affected_by_module`` the most affected modules with their
+    full counts, ``affected_files`` the paths of those modules (still sorted),
+    and ``affected_entry_points`` / ``related_tests`` their first items in
+    order. The ``total_*`` fields always describe the whole result, before
+    capping, and ``truncated`` is ``True`` when any list was cut.
     """
 
     target: str
@@ -143,6 +152,13 @@ class ImpactResult(BaseModel):
     affected_by_module: dict[str, int] = {}
     affected_entry_points: list[Node] = []
     related_tests: list[Node] = []
+    limit: int | None = None
+    truncated: bool = False
+    total_affected: int = 0
+    total_affected_files: int = 0
+    total_affected_modules: int = 0
+    total_affected_entry_points: int = 0
+    total_related_tests: int = 0
 
 
 class Explanation(BaseModel):
