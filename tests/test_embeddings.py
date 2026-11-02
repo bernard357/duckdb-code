@@ -143,3 +143,49 @@ def test_find_similar_empty_and_no_vectors(tmp_path):
     store._con.execute("DELETE FROM vectors")
     assert store.find_similar("payments.charge.Charge", limit=5).results == []
     store.close()
+
+
+def test_embedding_text_adds_the_docstring_and_the_callees():
+    text = _embedding_text(
+        "function",
+        "query",
+        "store.Store.query",
+        docstring="Fuse two rankings.",
+        callees=["_vector_ranking", "_text_ranking"],
+    )
+    assert text == (
+        "function query store Store query Fuse two rankings. "
+        "vector ranking text ranking"
+    )
+
+
+def test_method_combining_two_helpers_ranks_above_them(tmp_path):
+    tree = tmp_path / "fusion"
+    tree.mkdir()
+    (tree / "store.py").write_text(
+        "class Store:\n"
+        "    def query(self, text):\n"
+        '        """Fuse the vector ranking and the keyword ranking into one\n'
+        '        result list."""\n'
+        "        return self._vector_ranking(text) + self._keyword_ranking(text)\n"
+        "\n"
+        "    def _vector_ranking(self, text):\n"
+        "        return []\n"
+        "\n"
+        "    def _keyword_ranking(self, text):\n"
+        "        return []\n",
+        encoding="utf-8",
+    )
+    store = CodeStore(
+        db_path=str(tmp_path / "fusion.duckdb"), root=str(tree), embedder="hashing"
+    )
+    try:
+        index_folder(store, tree)
+        hits = store.search(
+            "where are the vector ranking and the keyword ranking combined into "
+            "one result list",
+            limit=3,
+        ).results
+    finally:
+        store.close()
+    assert hits[0].node.qualified_name == "store.Store.query"

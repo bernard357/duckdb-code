@@ -171,9 +171,32 @@ vectors), with a dependency-free `hashing` backend reserved for tests and
 offline use — it produces stable, normalized but lexical vectors, never a
 production choice. The backend is selected by `DUCKDB_CODE_EMBEDDER` (or the
 `embedder` setting), and its id and dimensions are stored in `meta` so a
-backend change is detectable. The embedded text is the symbol's kind plus its
-identifier with dotted names split into tokens (relationships, not source lines
-— so search is intent-over-identifiers).
+backend change is detectable.
+
+__What a symbol is embedded from.__ The embedded text holds the symbol's kind
+and identifier, with dotted names split into tokens, its Python docstring, and
+the names of what it calls. The docstring is whitespace-collapsed and capped at
+300 characters, and is kept in a `docstrings` side table (schema v7) read only
+to embed, so it never travels in a node of a tool response. The callees are
+read from `calls` edges above suffix confidence (at most 12, with underscores
+turned into spaces). The identifier alone could not answer a question about
+behaviour: on the `make quality` corpus, "where are the vector-similarity
+ranking and the BM25 keyword ranking combined into one result list" ranked
+`VectorStore.query` 111th, below its own helpers `_text_ranking` and
+`_vector_ranking`, whose names carry "ranking", while its docstring says it
+"fuses the vector ranking and the BM25 ranking". Measured variants:
+
+| Embedded text | q01 rank of `query` | q04 rank (`find_similar`) | q09 MCP files in top 10 |
+| --- | --- | --- | --- |
+| kind and identifier | 111 | 3 | 3/3 |
+| + first docstring paragraph | 37 | 1 | 3/3 |
+| + callee names | 2 | 51 | 2/3 |
+| + first paragraph and callees | 1 | 5 | 3/3 |
+| + docstring (300 chars) and callees | 1 | 1 | 3/3 |
+
+The answer often sits past a docstring's first paragraph, and callee names
+alone pull unrelated code that calls the same helpers, so the shipped text
+takes the capped docstring and the callees together.
 
 ## Incremental re-index {#incremental}
 

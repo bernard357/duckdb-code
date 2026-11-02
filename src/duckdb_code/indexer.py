@@ -849,11 +849,19 @@ def index_folder(
 
 def _extract_folder(
     folder: Path, recursive: bool, *, use_default_ignores: bool = True
-) -> tuple[list[tuple[str, str, str]], list[Node], list[Edge], dict[str, int], int]:
+) -> tuple[
+    list[tuple[str, str, str]],
+    list[Node],
+    list[Edge],
+    dict[str, int],
+    int,
+    dict[str, str],
+]:
     """Walk ``folder`` and extract every indexable file (no DuckDB writes).
 
-    Returns ``(file_rows, all_nodes, all_edges, languages, skipped)`` where
-    ``file_rows`` is ``(rel_path, language, etag)`` per indexed file. Shared by
+    Returns ``(file_rows, all_nodes, all_edges, languages, skipped,
+    docstrings)`` where ``file_rows`` is ``(rel_path, language, etag)`` per
+    indexed file and ``docstrings`` maps node ids to their docstring. Shared by
     the full-build and incremental paths so both see identical extraction.
 
     The ignore spec (built once per run from the folder's ``.gitignore`` /
@@ -865,6 +873,7 @@ def _extract_folder(
     all_nodes: list[Node] = []
     all_edges: list[Edge] = []
     languages: dict[str, int] = {}
+    docstrings: dict[str, str] = {}
 
     ignore_scope = _IgnoreScope(folder)
     paths, skipped = _iter_files(
@@ -892,10 +901,11 @@ def _extract_folder(
         extraction = extractor.extract(text, rel)
         all_nodes.extend(extraction.nodes)
         all_edges.extend(extraction.edges)
+        docstrings.update(extraction.docstrings)
         file_rows.append((rel, language, etag))
         languages[language] = languages.get(language, 0) + 1
 
-    return file_rows, _dedup_nodes(all_nodes), all_edges, languages, skipped
+    return file_rows, _dedup_nodes(all_nodes), all_edges, languages, skipped, docstrings
 
 
 def _dedup_nodes(nodes: list[Node]) -> list[Node]:
@@ -915,6 +925,15 @@ def _dedup_nodes(nodes: list[Node]) -> list[Node]:
         seen.add(node.node_id)
         unique.append(node)
     return unique
+
+
+def _write_docstrings(store: CodeStore, docstrings: dict[str, str]) -> None:
+    """Store the docstrings in their side table, read only to embed symbols."""
+    if docstrings:
+        store._con.executemany(
+            "INSERT INTO docstrings (node_id, text) VALUES (?, ?)",
+            sorted(docstrings.items()),
+        )
 
 
 def _discover_repositories(
@@ -952,7 +971,7 @@ def _full_index(
     """Full rebuild: recreate the tables and rewrite the whole graph."""
     _recreate_tables(store)
     build_stamp = datetime.datetime.now(datetime.UTC)
-    file_rows, all_nodes, all_edges, languages, skipped = _extract_folder(
+    file_rows, all_nodes, all_edges, languages, skipped, docstrings = _extract_folder(
         folder, recursive, use_default_ignores=use_default_ignores
     )
     repositories = _discover_repositories(folder, file_rows)
@@ -961,6 +980,7 @@ def _full_index(
     _write(
         store, file_rows, all_nodes, resolved_edges, build_stamp, folder, repositories
     )
+    _write_docstrings(store, docstrings)
     _finalize(store)
 
     return IndexReport(
@@ -1000,7 +1020,7 @@ def _incremental_index(
     the same on-disk state.
     """
     stored = _stored_etags(store)
-    file_rows, all_nodes, all_edges, languages, skipped = _extract_folder(
+    file_rows, all_nodes, all_edges, languages, skipped, docstrings = _extract_folder(
         folder, recursive, use_default_ignores=use_default_ignores
     )
     live = {path: etag for path, _language, etag in file_rows}
@@ -1023,6 +1043,7 @@ def _incremental_index(
     _write(
         store, file_rows, all_nodes, resolved_edges, build_stamp, folder, repositories
     )
+    _write_docstrings(store, docstrings)
     _finalize(store)
 
     return IndexReport(
@@ -1242,6 +1263,7 @@ def _recreate_tables(store: CodeStore) -> None:
         "vectors",
         "commits",
         "repositories",
+        "docstrings",
     ):
         con.execute(f"DROP TABLE IF EXISTS {table}")
     for ddl in SCHEMA_DDL:
@@ -1377,16 +1399,33 @@ def _compute_communities(store: CodeStore) -> None:
 _EMBEDDABLE_KINDS = ("module", "class", "function", "page", "heading")
 
 
-def _embedding_text(kind: str, name: str, qualified_name: str) -> str:
-    """The text embedded for a symbol: its kind and identifier, de-dotted.
+# At most this many callee names join a symbol's embedding text.
+_EMBEDDING_CALLEES = 12
+
+
+def _embedding_text(
+    kind: str,
+    name: str,
+    qualified_name: str,
+    docstring: str = "",
+    callees: list[str] | None = None,
+) -> str:
+    """The text embedded for a symbol: what it is, says, and combines.
 
     Dotted qualified names are split into words so the embedder sees the path
     segments as tokens (``payments.charge.Charge`` -> ``payments charge
     Charge``), which an identifier-level model matches on far better than one
-    opaque dotted string.
+    opaque dotted string. The docstring says what the symbol is for, and the
+    names of what it calls (``_vector_ranking`` -> ``vector ranking``) say what
+    it combines, so a method that fuses two helpers is found by a question
+    about the fusion, not only by its name.
     """
     words = qualified_name.replace(".", " ").replace("::", " ").replace("/", " ")
-    return f"{kind} {name} {words}".strip()
+    called = " ".join(
+        callee.strip("_").replace("_", " ")
+        for callee in (callees or [])[:_EMBEDDING_CALLEES]
+    )
+    return " ".join(part for part in (kind, name, words, docstring, called) if part)
 
 
 def _compute_embeddings(store: CodeStore) -> None:
@@ -1410,9 +1449,24 @@ def _compute_embeddings(store: CodeStore) -> None:
     ).fetchall()
     if not rows:
         return
+    docstrings = dict(con.execute("SELECT node_id, text FROM docstrings").fetchall())
+    # What each symbol calls, from binds above a shared-name guess, by name.
+    callees: dict[str, list[str]] = {}
+    for src_id, callee in con.execute(
+        "SELECT DISTINCT e.src_id, d.name FROM edges e "
+        "JOIN nodes d ON d.node_id = e.dst_id "
+        "WHERE e.kind = 'calls' AND e.confidence > ? ORDER BY e.src_id, d.name",
+        [CONFIDENCE_SUFFIX],
+    ).fetchall():
+        callees.setdefault(src_id, []).append(callee)
     try:
         embedder = resolve_embedder(store.settings.embedder)
-        texts = [_embedding_text(kind, name, qn) for _nid, kind, name, qn in rows]
+        texts = [
+            _embedding_text(
+                kind, name, qn, docstrings.get(nid, ""), callees.get(nid, [])
+            )
+            for nid, kind, name, qn in rows
+        ]
         vectors = embedder.embed(texts)
     except Exception as exc:  # noqa: BLE001 — degrade, never fail the index
         logger.warning("skipping embeddings (%s): %s", store.settings.embedder, exc)

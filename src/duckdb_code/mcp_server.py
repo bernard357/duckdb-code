@@ -137,7 +137,9 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         retry failed payments?" or "the http client setup" without a known
         identifier. This is the first tool to reach for when orienting in an
         unfamiliar codebase; follow a hit's ``path``/``range`` to the source or
-        to `impact` for its blast radius.
+        to `impact` for its blast radius. Each symbol is matched on its kind,
+        name, docstring, and the names of what it calls, so describe what the
+        code does, not only what it might be called.
 
         Arguments:
         - query: a natural-language or keyword description of what you are

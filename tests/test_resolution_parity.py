@@ -27,7 +27,9 @@ FIXTURES = [
 def _extract(folder: Path) -> tuple[list[Node], list[Edge]]:
     # Reuse the real walk+extraction helper so the test sees exactly what the
     # indexer feeds into resolve_edges.
-    _rows, nodes, edges, _langs, _skipped = _extract_folder(folder, recursive=True)
+    _rows, nodes, edges, _langs, _skipped, _docs = _extract_folder(
+        folder, recursive=True
+    )
     return nodes, edges
 
 

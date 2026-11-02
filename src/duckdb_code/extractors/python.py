@@ -17,6 +17,7 @@ Node-type names below were confirmed against the installed grammar pack
 ``return_statement``, ``parameters``, ``global_statement`` / ``nonlocal_statement``.
 """
 
+import ast
 from pathlib import PurePosixPath
 
 from duckdb_code.extractors.base import Extraction
@@ -50,6 +51,12 @@ def _node_id(kind: str, qualified_name: str, path: str, start_line: int) -> str:
 
 def _unresolved_target(raw: str) -> str:
     return f"{UNRESOLVED}{raw}"
+
+
+# A docstring is kept up to this many characters: enough for the sentence that
+# says what a symbol does (often past the first paragraph), short enough to
+# keep the embedding text about the symbol.
+DOCSTRING_CHARS = 300
 
 
 # Raw-target marker for ``self.name`` inside a method: ``self::<class qn>::name``.
@@ -113,7 +120,9 @@ class PythonExtractor:
         tree = parser.parse(text.encode("utf-8"))
         builder = _PythonBuilder(path)
         builder.run(tree.root_node)
-        return Extraction(nodes=builder.nodes, edges=builder.edges)
+        return Extraction(
+            nodes=builder.nodes, edges=builder.edges, docstrings=builder.docstrings
+        )
 
 
 class _PythonBuilder:
@@ -132,6 +141,8 @@ class _PythonBuilder:
         # (receiver parameter, class qn) while walking a method body, so
         # ``self.name`` resolves within the enclosing class first.
         self._receiver: tuple[str, str] | None = None
+        # node_id -> docstring of each class and function that has one.
+        self.docstrings: dict[str, str] = {}
 
     # -- helpers ---------------------------------------------------------
 
@@ -247,6 +258,18 @@ class _PythonBuilder:
             inner = named[-1] if named else None
         if inner is None:
             return
+        # Applying a decorator named by a bare name (``@cache``,
+        # ``@_described(server)``) uses it from the enclosing scope. An
+        # attribute decorator (``@app.get``) would bind by its tail name to
+        # every same-named method, so it is not recorded.
+        for decorator in node.named_children:
+            if decorator.type != "decorator" or not decorator.named_children:
+                continue
+            expr = decorator.named_children[0]
+            if expr.type == "call":
+                expr = expr.child_by_field_name("function") or expr
+            if expr.type == "identifier":
+                self._add_unresolved(container_id, self._text(expr), "calls")
         route = self._route_from_decorators(node)
         if inner.type == "class_definition":
             self._handle_class(inner, scope_qn, container_id)
@@ -330,6 +353,7 @@ class _PythonBuilder:
         class_id = self._add_node("class", name, qn, node)
         self._class_qn_of[class_id] = qn
         self._add_defines(container_id, class_id)
+        self._record_docstring(class_id, node.child_by_field_name("body"))
         # Superclasses: the argument_list holds base identifiers/attributes.
         bases = node.child_by_field_name("superclasses")
         if bases is not None:
@@ -349,6 +373,7 @@ class _PythonBuilder:
         qn = f"{scope_qn}.{name}" if scope_qn else name
         func_id = self._add_node("function", name, qn, node)
         self._add_defines(container_id, func_id)
+        self._record_docstring(func_id, node.child_by_field_name("body"))
         params = self._param_names(node)
         # A method (defined directly in a class body) resolves calls on its
         # first parameter (``self``/``cls``) within that class first.
@@ -378,6 +403,10 @@ class _PythonBuilder:
                 self._handle_class(child, scope_qn, owner_id)
             elif kind == "function_definition":
                 self._handle_function(child, scope_qn, owner_id)
+            elif kind == "decorated_definition":
+                # A decorated def inside a function (a tool registered in a
+                # server factory, a route in an app factory) is a symbol too.
+                self._handle_decorated(child, scope_qn, owner_id)
             elif kind == "import_statement":
                 self._handle_import(child, aliased=False)
             elif kind == "import_from_statement":
@@ -545,6 +574,24 @@ class _PythonBuilder:
         elif target.type in _TARGET_GROUPS or target.type == "as_pattern_target":
             for child in target.named_children:
                 self._collect_targets(child, names)
+
+    def _record_docstring(self, node_id: str, body) -> None:
+        """Keep a def's or class's docstring: whitespace-collapsed, capped."""
+        if body is None or not body.named_children:
+            return
+        literal = body.named_children[0]
+        # The grammar yields the docstring as a bare `string` in the block, or
+        # wrapped in an `expression_statement` depending on its version.
+        if literal.type == "expression_statement" and literal.named_children:
+            literal = literal.named_children[0]
+        if literal.type != "string":
+            return
+        try:
+            value = ast.literal_eval(self._text(literal))
+        except (ValueError, SyntaxError):
+            return  # an f-string or an unusual literal: no docstring
+        if isinstance(value, str) and value.strip():
+            self.docstrings[node_id] = " ".join(value.split())[:DOCSTRING_CHARS]
 
     def _first_param(self, func_node) -> str | None:
         """The name of a function's first parameter (``self`` for a method)."""

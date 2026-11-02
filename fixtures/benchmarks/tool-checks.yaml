@@ -59,9 +59,6 @@ cases:
         key: node.qualified_name
         values: [duckdb_vectors.store.VectorStore.query]
         within: 5
-        xfail:
-          issue: 41
-          reason: the helpers _text_ranking and _vector_ranking outrank the fusing method
 
   - id: q02
     question: Which functions call CodeStore._resolve_target directly?
@@ -222,13 +219,16 @@ cases:
           - duckdb_code.cli.index
           - duckdb_code.cli.watch
           - duckdb_code.cli.mcp
-          - duckdb_code.mcp_server.build_server
+          - duckdb_code.mcp_server.build_server.search
 
   - id: size
     question: Is impact bounded on a high fan-in target?
+    # The Markdown chunker closed the stdio transport before the #40 cap, at
+    # 183 affected nodes on this corpus; after #39 and #38 it has 40, so the
+    # case now targets the most depended-upon module (684 affected nodes).
     tool: impact
     args:
-      target: duckdb-vectors/src/duckdb_vectors/chunkers/markdown.py
+      target: duckdb-code/src/duckdb_code/models.py
     checks:
       - type: bounded
         truncated: true

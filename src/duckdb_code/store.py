@@ -450,6 +450,12 @@ SCHEMA_DDL = (
         head_commit TEXT
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS docstrings (
+        node_id TEXT NOT NULL PRIMARY KEY,
+        text    TEXT NOT NULL
+    )
+    """,
 )
 
 # Read-write-only indexes. No ``idx_files_path`` — the ``files.path`` primary
@@ -472,9 +478,11 @@ INDEX_DDL = (
 # Version 5 adds the ``commits`` table (recent git commits per file, for the
 # ``history`` tool). Version 6 adds the ``repositories`` table (the git
 # repositories found under the root, ``""`` for a root that is one), so git
-# data is gathered and Python imports bind per repository. A store opened
+# data is gathered and Python imports bind per repository. Version 7 adds the
+# ``docstrings`` table (a symbol's docstring, collapsed and capped), read only
+# to build embedding text, so it never travels with a node. A store opened
 # against an older file recreates the schema on the next full index.
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 class CodeStore:

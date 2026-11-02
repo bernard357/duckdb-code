@@ -18,6 +18,9 @@ class Extraction(BaseModel):
 
     nodes: list[Node]
     edges: list[Edge]
+    # node_id -> the symbol's docstring, whitespace-collapsed and capped; read
+    # only to build embedding text, so it never travels with a node.
+    docstrings: dict[str, str] = {}
 
 
 @runtime_checkable

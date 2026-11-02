@@ -149,3 +149,75 @@ def test_relative_imports_keep_their_level():
         ".config.Settings",
         ".sibling",
     ]
+
+
+_NESTED_SOURCE = '''\
+def _described(server):
+    def register(fn):
+        return fn
+    return register
+
+
+def build_server(server, app):
+    """Build the server and register its tools."""
+
+    @_described(server)
+    def search(query):
+        """Rank symbols for a query."""
+        return lookup(query)
+
+    @app.get("/health")
+    def health():
+        return "ok"
+
+    return server
+'''
+
+
+def _node_named(extraction, qualified_name):
+    return next(n for n in extraction.nodes if n.qualified_name == qualified_name)
+
+
+def test_decorated_function_nested_in_a_function_is_a_node():
+    extraction = PythonExtractor().extract(_NESTED_SOURCE, "m.py")
+    inner = _node_named(extraction, "m.build_server.search")
+    outer = _node_named(extraction, "m.build_server")
+    assert inner.kind == "function"
+    defines = {(e.src_id, e.dst_id) for e in extraction.edges if e.kind == "defines"}
+    assert (outer.node_id, inner.node_id) in defines
+    # The nested tool owns its calls; the enclosing function no longer does.
+    assert _raw_from(extraction, "search", "calls") == ["lookup"]
+    assert "lookup" not in _raw_from(extraction, "build_server", "calls")
+
+
+def test_route_decorator_on_a_nested_function_emits_a_route():
+    extraction = PythonExtractor().extract(_NESTED_SOURCE, "m.py")
+    routes = [n.qualified_name for n in extraction.nodes if n.kind == "route"]
+    assert routes == ["GET /health"]
+
+
+def test_bare_name_decorator_is_used_by_the_enclosing_scope():
+    extraction = PythonExtractor().extract(_NESTED_SOURCE, "m.py")
+    assert "_described" in _raw_from(extraction, "build_server", "calls")
+    # An attribute decorator (`@app.get`) binds by its tail name: not emitted.
+    assert "get" not in _raw_from(extraction, "build_server", "calls")
+
+
+def test_docstrings_are_captured_collapsed_and_capped():
+    long_doc = "word " * 200
+    source = (
+        "class Store:\n"
+        '    """Keep items.\n\n    Second   paragraph\n    wraps."""\n\n'
+        "    def get(self):\n"
+        f'        """{long_doc}"""\n'
+        "        return 1\n"
+    )
+    extraction = PythonExtractor().extract(source, "m.py")
+    docs = {
+        n.qualified_name: extraction.docstrings[n.node_id]
+        for n in extraction.nodes
+        if n.node_id in extraction.docstrings
+    }
+    assert docs["m.Store"] == "Keep items. Second paragraph wraps."
+    assert len(docs["m.Store.get"]) == 300
+    assert docs["m.Store.get"].startswith("word word")

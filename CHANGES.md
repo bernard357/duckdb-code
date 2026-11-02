@@ -75,6 +75,23 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
     bind, including every import of the workspace's own packages.
 
   Rebuild existing indexes with `duckdb-code index <folder> --rebuild`.
+- __`search` sees what a symbol does, and nested decorated functions are
+  symbols.__ On the pinned corpus, the method that fuses two rankings ranked
+  111th for a question about the fusion, below its own helpers, and the MCP
+  tools registered inside `build_server` were not in the graph at all (#41).
+  - A symbol's embedding text adds its Python docstring (whitespace-collapsed,
+    capped at 300 characters, kept in a `docstrings` side table, schema v7)
+    and the names of what it calls. `VectorStore.query` now ranks first for
+    that question, and `find_similar` and the other search cases improve or
+    hold.
+  - A decorated function defined inside a function, such as an MCP tool or a
+    route in an app factory, is extracted as a symbol qualified under its
+    enclosing function, with its own calls and references, and a route
+    decorator on it emits a route.
+  - A decorator named by a bare name (`@cache`, `@_described(server)`) is
+    recorded as used by the enclosing scope.
+
+  Rebuild existing indexes with `duckdb-code index <folder> --rebuild`.
 
 ## v261101
 
