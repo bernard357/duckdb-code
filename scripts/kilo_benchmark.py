@@ -29,6 +29,7 @@ import sqlite3
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -57,6 +58,30 @@ DEFAULT_AGENT = "ask"
 DUCKDB_CODE_SPEC = "duckdb-code==261101"
 ARMS = ("A", "B")
 DUCKDB_CODE_PREFIX = "duckdb-code_"
+KILO_DATA_DIR = (
+    Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share")))
+    / "kilo"
+)
+# Agent-level rules for the read-only `ask` agent, the same in both arms.
+# Paths outside the workspace are denied (a search from the home folder then
+# errors instead of prompting and ending the run), except Kilo's own
+# tool-output and temporary folders, which it reads large tool outputs back
+# from; they come after the catch-all so they win.
+READ_ONLY_PERMISSIONS: dict[str, object] = {
+    "read": "allow",
+    "glob": "allow",
+    "grep": "allow",
+    "list": "allow",
+    "webfetch": "deny",
+    "websearch": "deny",
+    "external_directory": {
+        "*": "deny",
+        f"{KILO_DATA_DIR}/tool-output/*": "allow",
+        f"{tempfile.gettempdir()}/kilo/*": "allow",
+    },
+}
+# A run counts toward the medians only with this status in the run log.
+OK_STATUS = "rc=0"
 TAG = re.compile(r"^\[bench (?P<question>[a-z0-9]+)-(?P<arm>[AB])-(?P<rep>\d+)\]$")
 
 
@@ -99,6 +124,7 @@ class RunMetrics(BaseModel):
     cost: float = 0.0
     latency_ms: int = 0
     wall_ms: int = 0
+    status: str = ""
     tool_calls: dict[str, int] = {}
     duckdb_code_calls: int = 0
     tool_errors: int = 0
@@ -114,6 +140,7 @@ class QuestionSummary(BaseModel):
 
     question: str
     runs: dict[str, int]
+    failed: dict[str, int]
     median_context_tokens: dict[str, float]
     median_generated_tokens: dict[str, float]
     median_cost: dict[str, float]
@@ -143,15 +170,17 @@ def _tagged_sessions(
 ) -> list[tuple[str, int, RunTag]]:
     """Return (session id, created time, tag) for the benchmark sessions."""
     rows = con.execute(
-        "SELECT id, time_created, title FROM session WHERE title LIKE '[bench %'"
+        "SELECT id, time_created, title FROM session WHERE title LIKE '[bench %' "
+        "ORDER BY time_created"
     ).fetchall()
-    selected = []
+    # A rerun reuses its title: keep only the most recent session per title.
+    latest: dict[str, tuple[str, int, RunTag]] = {}
     for session_id, created, title in rows:
         tag = parse_tag(title)
         if tag is None or (questions is not None and tag.question not in questions):
             continue
-        selected.append((session_id, created, tag))
-    return selected
+        latest[title] = (session_id, created, tag)
+    return list(latest.values())
 
 
 def _run_metrics(
@@ -264,15 +293,33 @@ def _delta_pct(baseline: float, value: float) -> float | None:
     return (value - baseline) / baseline * 100.0
 
 
+def _failed(run: RunMetrics) -> bool:
+    """A run failed when the run log recorded anything but a clean exit.
+
+    A run with no log entry (status unknown) is kept, so metrics read from the
+    session database alone still summarize.
+    """
+    return bool(run.status) and run.status != OK_STATUS
+
+
 def summarize(runs: list[RunMetrics]) -> list[QuestionSummary]:
-    """Group runs by question and report per-arm medians and B's change."""
+    """Group runs by question and report per-arm medians and B's change.
+
+    Failed runs are counted per arm but left out of every median, so a run
+    that ended early cannot pass for a cheap one.
+    """
     by_question: dict[str, list[RunMetrics]] = {}
     for run in runs:
         by_question.setdefault(run.question, []).append(run)
     summaries = []
     for question in sorted(by_question):
         group = by_question[question]
-        per_arm = {arm: [r for r in group if r.arm == arm] for arm in ARMS}
+        failed = {
+            arm: sum(1 for r in group if r.arm == arm and _failed(r)) for arm in ARMS
+        }
+        per_arm = {
+            arm: [r for r in group if r.arm == arm and not _failed(r)] for arm in ARMS
+        }
 
         def medians(field: str, arms=per_arm) -> dict[str, float]:
             return {
@@ -293,6 +340,7 @@ def summarize(runs: list[RunMetrics]) -> list[QuestionSummary]:
             QuestionSummary(
                 question=question,
                 runs={arm: len(rs) for arm, rs in per_arm.items() if rs},
+                failed={arm: n for arm, n in failed.items() if n},
                 median_context_tokens=context,
                 median_generated_tokens=medians("generated_tokens"),
                 median_cost=medians("cost"),
@@ -332,15 +380,22 @@ def arm_overlay(arm: str, *, db: str, uvx: str, spec: str = DUCKDB_CODE_SPEC) ->
     global file and would otherwise leak into the baseline (a bare
     ``enabled: false`` entry is accepted even where no global entry exists).
     Arm B sets ``duckdb-code`` in full, serving a prebuilt index without
-    re-indexing on startup; its ``command`` replaces any global one. It also
-    lets the read-only ``ask`` agent call the tools without a prompt (a
-    non-interactive run otherwise rejects them).
+    re-indexing on startup; its ``command`` replaces any global one.
+
+    A non-interactive run rejects any tool call that would prompt, and the
+    run then ends. So both arms give the read-only ``ask`` agent the same
+    agent-level rules: the read-only file tools are allowed and the web tools
+    are denied (a denied call returns an error and the run goes on, and the
+    answer has to come from the local tree). Arm B also allows the
+    duckdb-code tools.
     """
+    permission = json.loads(json.dumps(READ_ONLY_PERMISSIONS))
     overlay: dict = {
         "mcp": {
             "duckdb-graph": {"enabled": False},
             "duckdb-code": {"enabled": False},
-        }
+        },
+        "agent": {"ask": {"permission": permission}},
     }
     if arm == "B":
         overlay["mcp"]["duckdb-code"] = {
@@ -348,7 +403,7 @@ def arm_overlay(arm: str, *, db: str, uvx: str, spec: str = DUCKDB_CODE_SPEC) ->
             "command": [uvx, spec, "mcp", "--db", db, "--no-startup-index"],
             "enabled": True,
         }
-        overlay["agent"] = {"ask": {"permission": {"duckdb-code_*": "allow"}}}
+        permission["duckdb-code_*"] = "allow"
     return overlay
 
 
@@ -358,26 +413,44 @@ def load_questions(path: Path) -> list[dict]:
     return list(data["questions"])
 
 
-def load_wall_times(path: Path) -> dict[str, int]:
-    """Read the run log: wall-clock milliseconds per session title.
+def load_run_log(path: Path) -> dict[str, dict]:
+    """Read the run log: the last entry recorded for each session title.
 
-    A run repeated under the same title (for example after a timeout) is
-    represented by its last entry. A missing log yields no wall times.
+    Each entry holds the run's ``status``, its ``wall_ms`` (startup included),
+    and, for a failed run, the first ``error`` line Kilo printed. A run
+    repeated under the same title is represented by its last entry, matching
+    the session that ``load_runs`` keeps. A missing log yields no entries.
     """
     if not path.exists():
         return {}
-    walls: dict[str, int] = {}
+    entries: dict[str, dict] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.strip():
             entry = json.loads(line)
-            walls[entry["title"]] = int(entry["wall_ms"])
-    return walls
+            entries[entry["title"]] = entry
+    return entries
 
 
-def attach_wall_times(runs: list[RunMetrics], walls: dict[str, int]) -> None:
-    """Set each run's wall-clock time from the run log, matched by title."""
+def first_error_line(stderr: str) -> str:
+    """The first line of Kilo's stderr that reports a failure, shortened.
+
+    Kept so a failed run can be diagnosed from the run log. It carries Kilo's
+    own error text (for example a rejected permission), never answer text.
+    """
+    for line in stderr.splitlines():
+        text = line.strip()
+        if text.startswith("Error") or "rejected" in text or "denied" in text:
+            return text[:200]
+    return ""
+
+
+def attach_run_log(runs: list[RunMetrics], entries: dict[str, dict]) -> None:
+    """Set each run's wall-clock time and status from the run log, by title."""
     for run in runs:
-        run.wall_ms = walls.get(run.title, run.wall_ms)
+        entry = entries.get(run.title)
+        if entry is not None:
+            run.wall_ms = int(entry.get("wall_ms", run.wall_ms))
+            run.status = str(entry.get("status", run.status))
 
 
 def load_grades(path: Path) -> dict[str, int]:
@@ -407,6 +480,7 @@ CSV_FIELDS = [
     "cost",
     "latency_ms",
     "wall_ms",
+    "status",
     "tool_calls",
     "duckdb_code_calls",
     "tool_errors",
@@ -438,17 +512,19 @@ def _fmt_delta(value: float | None) -> str:
 def markdown_table(summaries: list[QuestionSummary]) -> str:
     """Render per-question medians and deltas as a Markdown table."""
     lines = [
-        "| Question | Runs A/B | Context tokens A | Context tokens B | Δ context "
+        "| Question | Runs A/B | Failed A/B | Context tokens A | Context tokens B "
+        "| Δ context "
         "| Latency A (s) | Latency B (s) | Δ latency | Wall A (s) | Wall B (s) "
         "| Cost A ($) | Cost B ($) | duckdb-code calls B | Grade A | Grade B |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- "
-        "| --- | --- | --- |",
+        "| --- | --- | --- | --- |",
     ]
     for s in summaries:
         lat = {arm: v / 1000 for arm, v in s.median_latency_ms.items()}
         wall = {arm: v / 1000 for arm, v in s.median_wall_ms.items() if v}
         lines.append(
             f"| {s.question} | {s.runs.get('A', 0)}/{s.runs.get('B', 0)} "
+            f"| {s.failed.get('A', 0)}/{s.failed.get('B', 0)} "
             f"| {_fmt(s.median_context_tokens.get('A'))} "
             f"| {_fmt(s.median_context_tokens.get('B'))} "
             f"| {_fmt_delta(s.context_delta_pct)} "
@@ -509,8 +585,10 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 check=False,
             )
             status = f"rc={proc.returncode}"
+            stderr = proc.stderr
         except subprocess.TimeoutExpired:
             status = "timeout"
+            stderr = ""
         elapsed = time.time() - started
         log.parent.mkdir(parents=True, exist_ok=True)
         with log.open("a", encoding="utf-8") as handle:
@@ -520,6 +598,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 "wall_ms": int(elapsed * 1000),
                 "started_at": int(started * 1000),
             }
+            if status != OK_STATUS:
+                entry["error"] = first_error_line(stderr)
             handle.write(json.dumps(entry) + "\n")
         print(f"[{index}/{len(plan)}] {run.title} {status} {elapsed:.1f}s")
     return 0
@@ -538,7 +618,7 @@ def _cmd_answers(args: argparse.Namespace) -> int:
 def _cmd_report(args: argparse.Namespace) -> int:
     questions = {q["id"] for q in load_questions(Path(args.questions))}
     runs = load_runs(Path(args.kilo_db), questions=questions)
-    attach_wall_times(runs, load_wall_times(Path(args.log)))
+    attach_run_log(runs, load_run_log(Path(args.log)))
     if args.grades:
         grades = load_grades(Path(args.grades))
         for run in runs:
