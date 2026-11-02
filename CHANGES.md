@@ -6,6 +6,8 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
 
 ## Unreleased
 
+## v261102
+
 A precision and multi-repo release: the graph stops treating name guesses as
 facts, binds Python imports and mines git history per repository in a
 workspace of several repositories, and embeds what each symbol does, all
