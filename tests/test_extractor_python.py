@@ -78,3 +78,61 @@ def test_attribute_tail_call_carries_tail():
     # c.run(amount) in billing.bill is an attribute-tail call carrying "run".
     billing = _extract("payments/billing.py")
     assert "run" in _raw_targets(billing, "calls")
+
+
+_SCOPED_SOURCE = """\
+class Walker:
+    def walk(self, items):
+        links = [item for item in items]
+        total = 0
+        for first, second in items:
+            total += 1
+        with open("x") as handle:
+            pass
+        self.visit(links)
+        self.helper.links()
+        return links
+
+    def visit(self, value):
+        return self.walk(value)
+
+
+def links():
+    return 1
+"""
+
+
+def _raw_from(extraction, src_name, kind):
+    src_ids = {n.node_id for n in extraction.nodes if n.name == src_name}
+    return sorted(
+        e.dst_id.lstrip("?")
+        for e in extraction.edges
+        if e.kind == kind and e.src_id in src_ids
+    )
+
+
+def test_function_local_names_are_bound_not_references():
+    extraction = PythonExtractor().extract(_SCOPED_SOURCE, "m.py")
+    references = _raw_from(extraction, "walk", "references")
+    # Locals assigned anywhere in the function (assignment, augmented
+    # assignment, for targets, with-as) never reference a module symbol.
+    for local in ("links", "total", "first", "second", "handle"):
+        assert local not in references
+
+
+def test_self_calls_carry_their_enclosing_class():
+    extraction = PythonExtractor().extract(_SCOPED_SOURCE, "m.py")
+    assert "self::m.Walker::visit" in _raw_from(extraction, "walk", "calls")
+    assert "self::m.Walker::walk" in _raw_from(extraction, "visit", "calls")
+
+
+def test_attribute_tail_is_kept_even_when_a_local_shares_its_name():
+    extraction = PythonExtractor().extract(_SCOPED_SOURCE, "m.py")
+    # self.helper.links() calls a `links` attribute, not the local `links`.
+    assert "links" in _raw_from(extraction, "walk", "calls")
+
+
+def test_module_level_function_has_no_self_receiver():
+    source = "def run(self):\n    return self.go()\n"
+    extraction = PythonExtractor().extract(source, "m.py")
+    assert _raw_from(extraction, "run", "calls") == ["go"]

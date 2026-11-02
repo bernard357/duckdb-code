@@ -113,11 +113,17 @@ class ImpactNode(BaseModel):
     origin, so every node reachable only through it inherits best_effort. In
     short: path/exact-qn seed = exact origin; suffix-only seed = best_effort
     origin; exact wins equal-distance tie.
+
+    ``via_container`` is ``True`` when the node depends only on the target's
+    enclosing class, module, or file, not on the target itself: a method
+    target seeds its container chain, so "what breaks if this class changes"
+    and "who calls this method" are both answered, and told apart.
     """
 
     node: Node
     distance: int
     resolution: str
+    via_container: bool = False
 
 
 class ImpactResult(BaseModel):
@@ -142,6 +148,11 @@ class ImpactResult(BaseModel):
     and ``affected_entry_points`` / ``related_tests`` their first items in
     order. The ``total_*`` fields always describe the whole result, before
     capping, and ``truncated`` is ``True`` when any list was cut.
+
+    ``affected`` lists the direct dependents first (``via_container`` false),
+    then the dependents reached only through the target's containers, each
+    group nearest first, so a cap keeps the direct dependents.
+    ``total_direct`` counts the direct dependents, before capping.
     """
 
     target: str
@@ -159,6 +170,7 @@ class ImpactResult(BaseModel):
     total_affected_modules: int = 0
     total_affected_entry_points: int = 0
     total_related_tests: int = 0
+    total_direct: int = 0
 
 
 class Explanation(BaseModel):

@@ -111,9 +111,11 @@ def test_impact_tool_returns_one_impact_result(indexed_db):
         "total_affected_modules",
         "total_affected_entry_points",
         "total_related_tests",
+        "total_direct",
     }
     affected_qns = {item["node"]["qualified_name"] for item in payload["affected"]}
     assert "payments.charge.Charge" in affected_qns
+    assert all("via_container" in item for item in payload["affected"])
 
 
 def test_impact_tool_applies_a_default_limit(indexed_db):

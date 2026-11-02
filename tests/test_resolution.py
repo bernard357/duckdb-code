@@ -414,3 +414,65 @@ def node_kind_of(nodes, node_id):
         if n.node_id == node_id:
             return n.kind
     return None
+
+
+def _walker_nodes():
+    module = _node("module", "m", "m.py")
+    base = _node("class", "m.Base", "m.py", 2)
+    base_run = _node("function", "m.Base.run", "m.py", 3)
+    walker = _node("class", "m.Walker", "m.py", 5)
+    walk = _node("function", "m.Walker.walk", "m.py", 6)
+    visit = _node("function", "m.Walker.visit", "m.py", 8)
+    other = _node("class", "n.Other", "n.py", 2)
+    other_visit = _node("function", "n.Other.visit", "n.py", 3)
+    other_module = _node("module", "n", "n.py")
+    return [
+        module,
+        base,
+        base_run,
+        walker,
+        walk,
+        visit,
+        other,
+        other_visit,
+        other_module,
+    ]
+
+
+def test_self_call_binds_exactly_to_its_own_class_method():
+    nodes = _walker_nodes()
+    walk = next(n for n in nodes if n.qualified_name == "m.Walker.walk")
+    edges = [_unresolved(walk.node_id, "self::m.Walker::visit", "calls", "m.py")]
+    calls = _edges_of_kind(resolve_edges(nodes, edges), "calls")
+    # Not n.Other.visit, which a bare-name match would also hit.
+    assert [(e.dst_id, e.confidence) for e in calls] == [
+        ("function:m.Walker.visit@m.py:8", 1.0)
+    ]
+    assert calls[0].resolution == "exact"
+
+
+def test_self_call_to_an_inherited_method_falls_back_to_the_name():
+    nodes = _walker_nodes()
+    walk = next(n for n in nodes if n.qualified_name == "m.Walker.walk")
+    edges = [_unresolved(walk.node_id, "self::m.Walker::run", "calls", "m.py")]
+    calls = _edges_of_kind(resolve_edges(nodes, edges), "calls")
+    # Walker defines no `run`: the name fallback finds Base.run, uniquely.
+    assert [(e.dst_id, e.confidence) for e in calls] == [
+        ("function:m.Base.run@m.py:3", 0.75)
+    ]
+    assert calls[0].resolution == "best_effort"
+
+
+def test_unique_suffix_bind_is_stronger_than_an_ambiguous_one():
+    nodes = _walker_nodes()
+    walk = next(n for n in nodes if n.qualified_name == "m.Walker.walk")
+    edges = [
+        _unresolved(walk.node_id, "run", "calls", "m.py"),
+        _unresolved(walk.node_id, "visit", "calls", "m.py"),
+    ]
+    calls = _edges_of_kind(resolve_edges(nodes, edges), "calls")
+    confidence_of = {e.dst_id: e.confidence for e in calls}
+    assert confidence_of["function:m.Base.run@m.py:3"] == 0.75
+    # `visit` names two methods: both binds stay at the suffix level.
+    assert confidence_of["function:m.Walker.visit@m.py:8"] == 0.55
+    assert confidence_of["function:n.Other.visit@n.py:3"] == 0.55

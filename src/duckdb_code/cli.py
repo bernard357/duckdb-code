@@ -231,9 +231,14 @@ def impact(
             f"Affected      : {shown} node(s)"
             + (f" of {total} (truncated by --limit {limit})" if shown < total else "")
         )
+        typer.echo(
+            f"Direct        : {result.total_direct} (the rest depend on the "
+            "target's class, module, or file)"
+        )
         for item in result.affected:
+            reach = "container" if item.via_container else "direct"
             typer.echo(
-                f"  {item.distance}  {item.resolution}  {item.node.kind}  "
+                f"  {item.distance}  {reach:<9}  {item.resolution}  {item.node.kind}  "
                 f"{item.node.qualified_name}  {item.node.path}"
             )
         if result.affected_by_module:

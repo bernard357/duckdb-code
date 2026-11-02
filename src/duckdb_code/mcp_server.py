@@ -245,7 +245,9 @@ def build_server(settings: Settings | None = None) -> MCPServer:
           {node, reason} where ``reason`` names why it is related (``reaches``
           — the test calls/references/imports the symbol). ``node`` carries
           node_id, kind, name, qualified_name, path, start_line, end_line,
-          language.
+          language. A test that reaches a method only by its name (a call on
+          an object of unknown type) counts only if it also reaches the
+          method's class, and a file's import nodes are not part of the file.
 
         Returns empty ``resolved``/``tests`` when the target matches nothing or
         no test reaches it (including an index built from source without tests).
@@ -354,14 +356,17 @@ def build_server(settings: Settings | None = None) -> MCPServer:
           start_line, end_line, language.
         - ambiguous: true when a symbol target matched more than one distinct
           qualified name (the result then spans all of them).
-        - affected: the nodes that depend on the target, ordered by ascending
-          distance then path. Each item is {node, distance, resolution} where
-          distance is the shortest reverse-hop count from the target (always
-          >= 1, because the seeds themselves are distance 0 and never emitted),
-          and resolution is "exact" when the node is reached through exact binds
-          from an exact/seed origin, else "best_effort" (a node reached only via
-          a suffix-matched seed or a best-effort edge). exact wins an
-          equal-distance tie.
+        - affected: the nodes that depend on the target, direct dependents
+          first, then by ascending distance then path. Each item is {node,
+          distance, resolution, via_container} where distance is the shortest
+          reverse-hop count from the target (always >= 1, because the seeds
+          themselves are distance 0 and never emitted), and resolution is
+          "exact" when the node is reached through exact binds from an
+          exact/seed origin, else "best_effort" (a node reached only via a
+          suffix-matched seed or a best-effort edge). exact wins an
+          equal-distance tie. via_container is true when the node depends only
+          on the target's enclosing class, module, or file: for "who calls
+          this method", keep the items where it is false.
         - affected_files: the sorted distinct paths of the affected nodes.
         - affected_by_module: a map of module path -> count of affected nodes in
           it (most affected first), the blast radius per module at a glance.
@@ -370,12 +375,15 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         - related_tests: the test symbols that exercise any affected or seed
           symbol (via a `tests` edge) — what to run after the change.
         - limit / truncated: the cap applied to each list, and whether any list
-          was cut by it. When truncated, ``affected`` keeps the nearest nodes
-          and ``affected_by_module`` the most affected modules (with their full
-          counts), and ``affected_files`` lists exactly those modules.
+          was cut by it. When truncated, ``affected`` keeps the direct, then
+          nearest, nodes and ``affected_by_module`` the most affected modules
+          (with their full counts), and ``affected_files`` lists exactly those
+          modules.
         - total_affected, total_affected_files, total_affected_modules,
           total_affected_entry_points, total_related_tests: the size of each
           list before capping.
+        - total_direct: how many affected nodes are direct dependents
+          (via_container false), before capping.
 
         An unresolved target returns empty ``resolved`` and ``affected``.
         """
@@ -488,7 +496,8 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         - kind: which view to return. One of:
           - `cycles` — the dependency cycles (strongly-connected groups of
             symbols that import/call each other, directly or transitively),
-            largest first.
+            largest first. Only binds above a name guess count: a call bound by
+            a name several symbols share cannot close a cycle.
           - `clusters` — the communities the indexer grouped the graph into,
             largest first.
           - `dead_code` — function/class symbols nothing else depends on,

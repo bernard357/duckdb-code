@@ -147,3 +147,48 @@ def test_unknown_kind_raises(tmp_path):
             store.analytics("bogus")
     finally:
         store.close()
+
+
+def _method_tree(tmp_path):
+    """Two classes whose `close` methods each call `self.con.close()`.
+
+    The attribute call binds by name to both `close` methods, which used to
+    report a false close <-> close cycle. `Walker.a` and `Walker.b` call each
+    other through `self.`, a genuine cycle that must still be reported.
+    """
+    tree = tmp_path / "methods"
+    tree.mkdir()
+    for module, cls in (("x", "First"), ("y", "Second")):
+        _write(
+            tree / f"{module}.py",
+            f"""
+            class {cls}:
+                def close(self):
+                    self.con.close()
+            """,
+        )
+    _write(
+        tree / "walker.py",
+        """
+        class Walker:
+            def a(self, n):
+                return self.b(n - 1)
+
+            def b(self, n):
+                return self.a(n - 1)
+        """,
+    )
+    store = CodeStore(db_path=str(tmp_path / "methods.duckdb"), root=str(tree))
+    index_folder(store, tree)
+    return store
+
+
+def test_cycles_ignore_ambiguous_name_binds(tmp_path):
+    store = _method_tree(tmp_path)
+    try:
+        result = store.analytics("cycles")
+    finally:
+        store.close()
+    names = [sorted(member.name for member in item.members) for item in result.results]
+    assert ["close", "close"] not in names
+    assert ["a", "b"] in names

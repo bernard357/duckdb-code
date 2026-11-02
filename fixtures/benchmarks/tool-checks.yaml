@@ -85,9 +85,8 @@ cases:
         field: affected
         key: node.qualified_name
         values: *resolve_target_callers
-        xfail:
-          issue: 39
-          reason: a method target seeds its container chain, so depth 1 returns 74 nodes
+        where:
+          via_container: "False"
 
   - id: q03
     question: Which tests should run after a change to the Markdown chunker?
@@ -108,9 +107,6 @@ cases:
           - duckdb-vectors/tests/test_pdf_chunker.py
           - duckdb-vectors/tests/test_pdf_fixtures.py
           - duckdb-vectors/tests/test_ranking_sql.py
-        xfail:
-          issue: 39
-          reason: tests reached through shared imports are listed as related
 
   - id: q04
     question: Where does duckdb-vectors build its MCP server?
@@ -194,9 +190,6 @@ cases:
       - type: count
         field: results
         equals: 1
-        xfail:
-          issue: 39
-          reason: name-suffix matching links unrelated same-named symbols into cycles
 
   - id: q09
     question: Which repositories build an MCP server?

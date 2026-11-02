@@ -52,6 +52,40 @@ def _unresolved_target(raw: str) -> str:
     return f"{UNRESOLVED}{raw}"
 
 
+# Raw-target marker for ``self.name`` inside a method: ``self::<class qn>::name``.
+# The resolver binds it to the class's own method first, as Python's attribute
+# lookup does, and falls back to the bare ``name`` (an inherited method).
+SELF_TARGET = "self::"
+
+
+def self_target(class_qn: str, name: str) -> str:
+    """The raw target for ``self.name`` in a method of class ``class_qn``."""
+    return f"{SELF_TARGET}{class_qn}::{name}"
+
+
+def split_self_target(raw: str) -> tuple[str, str] | None:
+    """Return ``(class_qn, name)`` for a :func:`self_target` raw, else None."""
+    if not raw.startswith(SELF_TARGET):
+        return None
+    class_qn, _, name = raw[len(SELF_TARGET) :].rpartition("::")
+    return (class_qn, name) if class_qn and name else None
+
+
+# Statements that open a new scope: their bodies are not the function's locals.
+_SCOPE_TYPES = frozenset({"function_definition", "class_definition", "lambda"})
+# Tuple/list targets whose identifiers are all bound by the assignment.
+_TARGET_GROUPS = frozenset(
+    {
+        "pattern_list",
+        "tuple_pattern",
+        "list_pattern",
+        "tuple",
+        "list",
+        "list_splat_pattern",
+    }
+)
+
+
 class PythonExtractor:
     """Extract graph nodes and edges from a single Python source file."""
 
@@ -80,6 +114,11 @@ class _PythonBuilder:
         # De-dup set for (src_id, raw_target, kind) within the file.
         self._seen_edges: set[tuple[str, str, str]] = set()
         self._module_id = ""
+        # Class node id -> class qualified name, so a method knows its class.
+        self._class_qn_of: dict[str, str] = {}
+        # (receiver parameter, class qn) while walking a method body, so
+        # ``self.name`` resolves within the enclosing class first.
+        self._receiver: tuple[str, str] | None = None
 
     # -- helpers ---------------------------------------------------------
 
@@ -276,6 +315,7 @@ class _PythonBuilder:
         name = self._text(name_node)
         qn = f"{scope_qn}.{name}" if scope_qn else name
         class_id = self._add_node("class", name, qn, node)
+        self._class_qn_of[class_id] = qn
         self._add_defines(container_id, class_id)
         # Superclasses: the argument_list holds base identifiers/attributes.
         bases = node.child_by_field_name("superclasses")
@@ -297,10 +337,23 @@ class _PythonBuilder:
         func_id = self._add_node("function", name, qn, node)
         self._add_defines(container_id, func_id)
         params = self._param_names(node)
+        # A method (defined directly in a class body) resolves calls on its
+        # first parameter (``self``/``cls``) within that class first.
+        class_qn = self._class_qn_of.get(container_id)
+        first = self._first_param(node) if class_qn is not None else None
+        receiver = (first, class_qn) if first and class_qn else None
         body = node.child_by_field_name("body")
         if body is not None:
-            # Nested defs append the defining function name to the scope.
-            self._walk_function_body(body, scope_qn=qn, owner_id=func_id, bound=params)
+            # Names assigned anywhere in the body are locals, bound like params.
+            bound = params | self._local_names(body)
+            outer, self._receiver = self._receiver, receiver
+            try:
+                # Nested defs append the defining function name to the scope.
+                self._walk_function_body(
+                    body, scope_qn=qn, owner_id=func_id, bound=bound
+                )
+            finally:
+                self._receiver = outer
         return func_id
 
     def _walk_function_body(
@@ -390,9 +443,9 @@ class _PythonBuilder:
         if kind == "call":
             func = node.child_by_field_name("function")
             if func is not None:
-                tail = self._attr_tail(func)
-                if tail and tail not in bound:
-                    self._add_unresolved(src_id, tail, "calls")
+                raw = self._target_of(func, bound)
+                if raw:
+                    self._add_unresolved(src_id, raw, "calls")
             args = node.child_by_field_name("arguments")
             if args is not None:
                 for child in args.named_children:
@@ -400,9 +453,9 @@ class _PythonBuilder:
             return
         if kind == "attribute":
             # A non-callee attribute load a.b.n references the tail n.
-            tail = self._attr_tail(node)
-            if tail and tail not in bound:
-                self._add_unresolved(src_id, tail, "references")
+            raw = self._target_of(node, bound)
+            if raw:
+                self._add_unresolved(src_id, raw, "references")
             return
         if kind == "identifier":
             name = self._text(node)
@@ -417,6 +470,77 @@ class _PythonBuilder:
             return
         for child in node.named_children:
             self._emit_calls_and_refs(child, src_id, bound)
+
+    def _target_of(self, node, bound: set[str]) -> str:
+        """The raw target a callee or attribute load names, or "" for none.
+
+        A bare name bound in the function (a parameter or a local) names no
+        module symbol. An attribute names its tail whatever the locals are
+        (``self.links`` is not the local ``links``), and ``self.name`` in a
+        method names the enclosing class's member first (:func:`self_target`).
+        """
+        if node.type == "identifier":
+            name = self._text(node)
+            return "" if name in bound else name
+        tail = self._attr_tail(node)
+        if node.type == "attribute" and tail and self._receiver is not None:
+            receiver, class_qn = self._receiver
+            obj = node.child_by_field_name("object")
+            if obj is not None and obj.type == "identifier":
+                if self._text(obj) == receiver:
+                    return self_target(class_qn, tail)
+        return tail
+
+    def _local_names(self, body) -> set[str]:
+        """Names a function body binds: assignment, for, with-as, walrus targets.
+
+        Nested functions, classes, and lambdas open their own scope and are
+        skipped; names declared ``global`` or ``nonlocal`` are not local.
+        """
+        names: set[str] = set()
+        declared: set[str] = set()
+        stack = list(body.named_children)
+        while stack:
+            node = stack.pop()
+            kind = node.type
+            if kind in _SCOPE_TYPES:
+                continue
+            if kind in ("global_statement", "nonlocal_statement"):
+                declared.update(
+                    self._text(c) for c in node.named_children if c.type == "identifier"
+                )
+                continue
+            if kind in (
+                "assignment",
+                "augmented_assignment",
+                "for_statement",
+                "for_in_clause",
+            ):
+                self._collect_targets(node.child_by_field_name("left"), names)
+            elif kind == "as_pattern":
+                self._collect_targets(node.child_by_field_name("alias"), names)
+            elif kind == "named_expression":
+                self._collect_targets(node.child_by_field_name("name"), names)
+            stack.extend(node.named_children)
+        return names - declared
+
+    def _collect_targets(self, target, names: set[str]) -> None:
+        """Add the identifiers an assignment target binds (not attributes)."""
+        if target is None:
+            return
+        if target.type == "identifier":
+            names.add(self._text(target))
+        elif target.type in _TARGET_GROUPS or target.type == "as_pattern_target":
+            for child in target.named_children:
+                self._collect_targets(child, names)
+
+    def _first_param(self, func_node) -> str | None:
+        """The name of a function's first parameter (``self`` for a method)."""
+        params = func_node.child_by_field_name("parameters")
+        if params is None or not params.named_children:
+            return None
+        names = self._param_names_of([params.named_children[0]])
+        return next(iter(names), None)
 
     # -- small parsing helpers -------------------------------------------
 
@@ -446,11 +570,15 @@ class _PythonBuilder:
         return ""
 
     def _param_names(self, func_node) -> set[str]:
-        names: set[str] = set()
         params = func_node.child_by_field_name("parameters")
         if params is None:
-            return names
-        for child in params.named_children:
+            return set()
+        return self._param_names_of(params.named_children)
+
+    def _param_names_of(self, children) -> set[str]:
+        """The names declared by a sequence of parameter nodes."""
+        names: set[str] = set()
+        for child in children:
             if child.type == "identifier":
                 names.add(self._text(child))
             else:

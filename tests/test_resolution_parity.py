@@ -13,6 +13,7 @@ from duckdb_code.indexer import _extract_folder, resolve_edges
 from duckdb_code.models import (
     CONFIDENCE_SAME_MODULE,
     CONFIDENCE_SUFFIX,
+    CONFIDENCE_UNIQUE_NAME,
     Edge,
     Node,
 )
@@ -71,6 +72,9 @@ def test_resolution_matches_brute_force_reference():
             # than the cap is dropped as noise.
             if len(hits) > idx._SUFFIX_FANOUT_CAP:
                 return []
+            # A suffix match on exactly one symbol is a unique-name bind.
+            if len(hits) == 1:
+                return [(hits[0], CONFIDENCE_UNIQUE_NAME)]
             return [(nid, CONFIDENCE_SUFFIX) for nid in hits]
 
         idx._resolve_scoped = brute_scoped

@@ -29,13 +29,14 @@ from duckdb_code.embedders import resolve_embedder
 from duckdb_code.etag import compute_etag
 from duckdb_code.extractors.base import Extraction
 from duckdb_code.extractors.markdown import _slug
-from duckdb_code.extractors.python import UNRESOLVED
+from duckdb_code.extractors.python import UNRESOLVED, split_self_target
 from duckdb_code.extractors.registry import detect_language, resolve_extractor
 from duckdb_code.models import (
     CONFIDENCE_EXACT,
     CONFIDENCE_IMPORT,
     CONFIDENCE_SAME_MODULE,
     CONFIDENCE_SUFFIX,
+    CONFIDENCE_UNIQUE_NAME,
     Edge,
     Node,
     resolution_of,
@@ -248,6 +249,17 @@ def resolve_edges(nodes: list[Node], edges: list[Edge]) -> list[Edge]:
         module_qn = by_path_module.get(src.path) if src else None
         raw = _raw_target(edge.dst_id)
         is_js_ts = src is not None and src.language in _JS_TS_LANGUAGES
+        # ``self.name`` in a method: the class's own member binds exactly, as
+        # Python's attribute lookup finds it first; otherwise (an inherited or
+        # instance attribute) fall back to the bare name.
+        receiver = split_self_target(raw)
+        if receiver is not None:
+            class_qn, raw = receiver
+            own = by_qn.get(f"{class_qn}.{raw}")
+            if own:
+                for dst_id in own:
+                    resolved.append(_bind(edge, dst_id, CONFIDENCE_EXACT))
+                continue
         for dst_id, confidence in _resolve_scoped(
             edge.kind, raw, module_qn, by_local, by_last_segment, is_js_ts
         ):
@@ -602,6 +614,11 @@ def _resolve_scoped(
     # and drop the edge rather than inventing a dense fan-out.
     suffix_hits = by_last_segment.get(raw)
     if suffix_hits and len(suffix_hits) <= _SUFFIX_FANOUT_CAP:
+        # One symbol of that name in the whole index is a unique-name bind
+        # (0.75), stronger than a guess among several same-named ones (0.55):
+        # `analytics cycles` keeps the former and drops the latter.
+        if len(suffix_hits) == 1:
+            return [(suffix_hits[0], CONFIDENCE_UNIQUE_NAME)]
         return [(nid, CONFIDENCE_SUFFIX) for nid in suffix_hits]
     return []
 

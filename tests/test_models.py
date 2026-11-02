@@ -107,7 +107,14 @@ def test_edge_fields():
 
 def test_impact_node_fields():
     impact_node = ImpactNode(node=_node(), distance=1, resolution="best_effort")
-    assert set(ImpactNode.model_fields) == {"node", "distance", "resolution"}
+    assert set(ImpactNode.model_fields) == {
+        "node",
+        "distance",
+        "resolution",
+        "via_container",
+    }
+    # A dependent is direct unless the result says it came through a container.
+    assert impact_node.via_container is False
     assert impact_node.distance == 1
 
 
@@ -134,6 +141,7 @@ def test_impact_result_defaults_and_fields():
         "total_affected_modules",
         "total_affected_entry_points",
         "total_related_tests",
+        "total_direct",
     }
     assert result.ambiguous is False
     # The new aggregation fields default to empty.
@@ -148,6 +156,7 @@ def test_impact_result_defaults_and_fields():
     assert result.total_affected_modules == 0
     assert result.total_affected_entry_points == 0
     assert result.total_related_tests == 0
+    assert result.total_direct == 0
 
 
 def test_explanation_fields():

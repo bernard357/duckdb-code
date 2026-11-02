@@ -29,6 +29,31 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
   the uncapped `total_*` counts and a `truncated` flag, so the same call
   returns 92 KB. `CodeStore.impact()` and the CLI verb stay unbounded unless
   given `limit` / `--limit` (#40).
+- __`impact`, `analytics cycles`, and `related_tests` stop over-reporting.__
+  On the pinned public corpus, `impact` on `CodeStore._resolve_target` at
+  depth 1 returns its 6 callers instead of 74 nodes, `cycles` reports the one
+  genuine cycle instead of five, and `related_tests` on the Markdown chunker
+  returns its two test files without the PDF and ranking tests (#39).
+  - The Python extractor treats names assigned in a function (assignment,
+    `for`, `with … as`, walrus) as bound, like parameters, so a local
+    variable no longer references a same-named symbol. An attribute tail is
+    still emitted when a local shares its name.
+  - `self.method()` in a method binds exactly to the enclosing class's own
+    method, falling back to the name for an inherited one.
+  - A name match on exactly one symbol in the index is a unique-name bind
+    (confidence 0.75); a match shared by several symbols stays at 0.55. Both
+    remain `best_effort`.
+  - `analytics cycles` uses only binds above 0.55, so a shared-name guess
+    (`close`, `embed`) cannot close a cycle.
+  - Each `impact` node carries `via_container`, true when it depends only on
+    the target's class, module, or file. Direct dependents come first, so the
+    MCP `limit` keeps them, and `total_direct` counts them.
+  - `related_tests` no longer seeds a file's import nodes, and a test reaching
+    a method only by its name counts only if it also reaches the method's
+    class.
+
+  Existing indexes keep their old edges until rebuilt: run
+  `duckdb-code index <folder> --rebuild`.
 
 ## v261101
 

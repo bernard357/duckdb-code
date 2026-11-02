@@ -86,10 +86,16 @@ token `budget`. Returns
 Transitive reverse-dependency set — "what breaks if I change this?" — in one
 call, aggregated by module with the affected entry points and the involved
 tests. Returns
-`{target, resolved: [node], ambiguous, affected: [{node, distance, resolution}], affected_by_module: {…}, affected_entry_points: […], related_tests: […], affected_files: […], limit, truncated, total_affected, total_affected_files, total_affected_modules, total_affected_entry_points, total_related_tests}`.
+`{target, resolved: [node], ambiguous, affected: [{node, distance, resolution, via_container}], affected_by_module: {…}, affected_entry_points: […], related_tests: […], affected_files: […], limit, truncated, total_affected, total_affected_files, total_affected_modules, total_affected_entry_points, total_related_tests, total_direct}`.
+
+A method target also seeds its class, module, and file, so one call answers
+both "who calls this method" and "what breaks if its class changes".
+`via_container` tells them apart: it is false for a direct dependent of the
+target and true for a node that depends only on one of its containers.
+`affected` lists the direct dependents first, and `total_direct` counts them.
 
 The response is bounded so a high fan-in target cannot overflow the MCP
-transport. `limit` (default 50) caps each list: the nearest `affected` nodes,
+transport. `limit` (default 50) caps each list: the direct, then nearest, `affected` nodes,
 the most-affected modules in `affected_by_module` (with their full counts) and
 their `affected_files`, the first entry points and the first related tests.
 The `total_*` fields carry the uncapped counts, and `truncated` is true when
@@ -109,6 +115,12 @@ ORM models, feature flags. Returns
 What to run after an edit, by static reachability plus naming convention.
 Returns `{symbol, tests: [{id, path, range, reason}]}`.
 
+A call on an object of unknown type, such as `chunker.chunk_file()`, binds by
+the method name to every class that defines it. Such a reach counts only when
+the test also reaches the method's class, and a file's import nodes are not
+part of the file, so a test of another chunker or of a shared model is not
+listed.
+
 ### `find_similar(symbol | snippet)`
 
 Code built the same way — "how do we usually do this here?" — so an agent
@@ -126,6 +138,12 @@ usually change with it), and churn. Returns
 Whole-repo structural views for planning and review: dependency `cycles`,
 `clusters`/communities, `dead_code` candidates, and `hotspots`
 (complexity × churn). Returns `{kind, results: […]}` shaped per `kind`.
+
+A cycle is a claim of certainty, so `cycles` uses only binds above suffix
+confidence (0.55): exact, import, same-module, and unique-name binds. A call
+bound by a name that several symbols share, such as `close` or `embed`, cannot
+close a cycle. `self.method()` binds exactly to the enclosing class's own
+method, so genuine mutual recursion between methods is still reported.
 
 ### `context_for_change(diff | branch)`
 

@@ -23,6 +23,7 @@ import duckdb
 from duckdb_code.config import Settings
 from duckdb_code.extractors.registry import EXTENSION_LANGUAGE
 from duckdb_code.models import (
+    CONFIDENCE_SUFFIX,
     AnalyticsItem,
     AnalyticsResult,
     ChangedSymbol,
@@ -135,7 +136,8 @@ def _is_test_path(path: str) -> bool:
 def _cap_impact(result: ImpactResult, limit: int) -> ImpactResult:
     """Cap every list of an ``impact`` result to ``limit`` items.
 
-    ``affected`` is already nearest-first, so its head is the closest reach.
+    ``affected`` is already direct-first, then nearest-first, so its head is
+    the target's own dependents, closest first.
     ``affected_by_module`` is most-affected-first: the head modules keep their
     full counts, and ``affected_files`` becomes exactly their paths, sorted,
     rather than an alphabetical cut of every file. The entry points and tests
@@ -160,6 +162,31 @@ def _cap_impact(result: ImpactResult, limit: int) -> ImpactResult:
         or len(capped.related_tests) < result.total_related_tests
     )
     return capped
+
+
+def _reverse_reach(
+    starts: set[str],
+    incoming: dict[str, list[tuple[str, bool]]],
+    depth: int | None,
+) -> set[str]:
+    """The node ids reachable from ``starts`` over ``incoming`` within ``depth``.
+
+    ``incoming`` maps a node to its dependents (``src`` of each edge into it);
+    the walk is breadth-first and ``starts`` themselves are included.
+    """
+    reached = set(starts)
+    frontier = set(starts)
+    hops = 0
+    while frontier and (depth is None or hops < depth):
+        frontier = {
+            src_id
+            for dst_id in frontier
+            for src_id, _exact in incoming.get(dst_id, ())
+            if src_id not in reached
+        }
+        reached |= frontier
+        hops += 1
+    return reached
 
 
 def _strongly_connected_components(
@@ -754,13 +781,27 @@ class CodeStore:
             node_by_id[node.node_id] = node
 
         affected_ids = visited - seed_ids
+        # Direct dependents: those reachable from the resolved target itself,
+        # not only through the containers seeded for it. Listed first, so a
+        # cap keeps "who uses this" ahead of "who uses its class".
+        direct_ids = (
+            _reverse_reach({node.node_id for node in resolved}, incoming, depth)
+            - seed_ids
+        )
         affected_nodes = [node_by_id[nid] for nid in affected_ids]
-        affected_nodes.sort(key=lambda n: (distance_of[n.node_id], *self._order_key(n)))
+        affected_nodes.sort(
+            key=lambda n: (
+                n.node_id not in direct_ids,
+                distance_of[n.node_id],
+                *self._order_key(n),
+            )
+        )
         affected = [
             ImpactNode(
                 node=node,
                 distance=distance_of[node.node_id],
                 resolution="exact" if resolution_of[node.node_id] else "best_effort",
+                via_container=node.node_id not in direct_ids,
             )
             for node in affected_nodes
         ]
@@ -797,6 +838,7 @@ class CodeStore:
             total_affected_modules=len(affected_by_module),
             total_affected_entry_points=len(affected_entry_points),
             total_related_tests=len(related_tests),
+            total_direct=len(direct_ids & affected_ids),
         )
         return result if limit is None else _cap_impact(result, limit)
 
@@ -848,6 +890,51 @@ class CodeStore:
         ).fetchall()
         return [self._row_to_node(row) for row in rows]
 
+    def _corroborated_tests(self, seed_ids: set[str]) -> list[Node]:
+        """The tests reaching ``seed_ids`` on evidence beyond a method name.
+
+        A ``tests`` edge into a method at suffix confidence comes from a call
+        like ``chunker.chunk_file()`` bound by the method name alone, which any
+        same-named method on another class also matches. Such a reach counts
+        only when the test also reaches the method's class. Any other reach
+        counts: an edge above suffix confidence, or one into a class, a
+        module-level function, or a module.
+        """
+        if not seed_ids:
+            return []
+        ids = list(seed_ids)
+        id_ph = ", ".join(["?"] * len(ids))
+        rows = self._con.execute(
+            f"""
+            SELECT e.src_id, e.confidence, c.node_id
+            FROM edges e
+            LEFT JOIN edges d ON d.kind = 'defines' AND d.dst_id = e.dst_id
+            LEFT JOIN nodes c ON c.node_id = d.src_id AND c.kind = 'class'
+            WHERE e.kind = 'tests' AND e.dst_id IN ({id_ph})
+            """,
+            ids,
+        ).fetchall()
+        accepted: set[str] = set()
+        pending: dict[str, set[str]] = {}
+        for src_id, confidence, class_id in rows:
+            if confidence > CONFIDENCE_SUFFIX or class_id is None:
+                accepted.add(src_id)
+            else:
+                pending.setdefault(src_id, set()).add(class_id)
+        pending = {s: c for s, c in pending.items() if s not in accepted}
+        if pending:
+            src_ph = ", ".join(["?"] * len(pending))
+            reached = self._con.execute(
+                f"SELECT src_id, dst_id FROM edges "
+                f"WHERE kind = 'tests' AND src_id IN ({src_ph})",
+                list(pending),
+            ).fetchall()
+            for src_id, dst_id in reached:
+                if dst_id in pending[src_id]:
+                    accepted.add(src_id)
+        tests = self._nodes_by_ids(list(accepted))
+        return sorted(tests, key=self._order_key)
+
     def related_tests(self, target: str) -> RelatedTestsResult:
         """Return the tests to run after editing ``target`` — a symbol or path.
 
@@ -865,8 +952,11 @@ class CodeStore:
         resolved, _ambiguous, _origin = self._resolve_target(target)
         if not resolved:
             return RelatedTestsResult(symbol=target, resolved=[], tests=[])
-        seed_ids = {node.node_id for node in resolved}
-        tests = [RelatedTest(node=node) for node in self._tests_reaching(seed_ids)]
+        # A file's import nodes stand for another module's symbols: a test
+        # reaching them exercises that module, not this file.
+        own = [node for node in resolved if node.kind != "import"] or resolved
+        seed_ids = {node.node_id for node in own}
+        tests = [RelatedTest(node=node) for node in self._corroborated_tests(seed_ids)]
         resolved_sorted = sorted(resolved, key=self._order_key)
         return RelatedTestsResult(symbol=target, resolved=resolved_sorted, tests=tests)
 
@@ -1288,11 +1378,17 @@ class CodeStore:
         (no recursion, so a deep graph cannot overflow the stack). Each SCC of
         size > 1 is one dependency cycle; singletons are not cycles and are
         dropped. Components are returned largest first.
+
+        A cycle is a claim of certainty, so it is built only from edges above
+        suffix confidence: a name match shared by several same-named symbols
+        (``close``, ``embed``) is a guess and cannot close a cycle, while a
+        unique-name, same-module, import, or exact bind can.
         """
         kind_ph = ", ".join(["?"] * len(_ANALYTICS_EDGE_KINDS))
         rows = self._con.execute(
-            f"SELECT src_id, dst_id FROM edges WHERE kind IN ({kind_ph})",
-            list(_ANALYTICS_EDGE_KINDS),
+            f"SELECT src_id, dst_id FROM edges WHERE kind IN ({kind_ph}) "
+            "AND confidence > ?",
+            [*_ANALYTICS_EDGE_KINDS, CONFIDENCE_SUFFIX],
         ).fetchall()
         adjacency: dict[str, list[str]] = {}
         for src_id, dst_id in rows:

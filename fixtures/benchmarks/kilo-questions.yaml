@@ -57,10 +57,12 @@ questions:
       "1": Lists at least four of the six, or all six plus unrelated callers.
       "0": Fewer than four, or mostly wrong.
     notes: >-
-      `impact` at depth 1 also returns everything that depends on the
-      enclosing class, module, and file (about 50 nodes, including CLI verbs
-      and tests), because a method target seeds its container chain. The
-      agent has to narrow that down to the direct callers.
+      In 261101, `impact` at depth 1 returns 74 nodes on the pinned corpus,
+      because local variables named `store` bind by name to the `store`
+      module, which a method target seeds through its container chain. The
+      agent has to narrow that down to the direct callers. With #39, locals
+      are bound in the extractor and each affected node carries
+      `via_container`, so depth 1 returns exactly the six callers.
 
   - id: q03
     category: related-tests
@@ -79,9 +81,12 @@ questions:
       "1": Names one of the two.
       "0": Neither, or only unrelated tests.
     notes: >-
-      `related_tests` on `src/duckdb_vectors/chunkers/markdown.py` also lists
-      `test_pdf_chunker.py`, `test_pdf_fixtures.py`, and `test_ranking_sql.py`,
-      which do not exercise the Markdown chunker.
+      In 261101, `related_tests` on `src/duckdb_vectors/chunkers/markdown.py`
+      also lists `test_pdf_chunker.py` and `test_pdf_fixtures.py` (their
+      `chunker.chunk_file()` calls bind by method name) and
+      `test_ranking_sql.py` (through the file's `import Chunk` node), which do
+      not exercise the Markdown chunker. With #39 it returns exactly
+      `tests/test_chunkers.py` and `tests/test_composite_chunker.py`.
 
   - id: q04
     category: similar-code
@@ -184,11 +189,14 @@ questions:
       "1": Identifies the walk recursion but also reports a false cycle as real.
       "0": Misses the walk recursion.
     notes: >-
-      `analytics cycles` also reports two false cycles caused by
-      name-suffix matching: `links` ↔ `_cross_boundary_edges` in `store.py`
-      (a local list named `links`) and `_emit_calls_and_refs` across the
-      Python and JavaScript extractors (two unrelated methods with the same
-      name, each only calling itself). Flagging them as false is a plus.
+      In 261101, `analytics cycles` also reports four false cycles caused by
+      name matching: `links` ↔ `_cross_boundary_edges` in `store.py` (a local
+      list named `links`), `_emit_calls_and_refs` across the Python and
+      JavaScript extractors, and, on the multi-repo corpus, `close` ↔ `close`
+      across duckdb-code and duckdb-vectors and a 5-member `embed` cycle
+      across three repositories. Flagging them as false is a plus. With #39,
+      cycles are built only from binds above a shared-name guess, and only
+      the walk recursion remains.
 
   - id: q09
     category: cross-repo-dependency

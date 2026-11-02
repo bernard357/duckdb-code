@@ -623,3 +623,137 @@ def test_impact_rejects_a_non_positive_limit(tmp_path):
             store.impact("core.base", limit=0)
     finally:
         store.close()
+
+
+def _write_tree(root: Path, files: dict[str, str]) -> None:
+    import textwrap
+
+    for rel, text in files.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(textwrap.dedent(text), encoding="utf-8")
+
+
+def _service_store(tmp_path) -> CodeStore:
+    """`Service.resolve` has one direct caller; its class has other dependents."""
+    tree = tmp_path / "svc"
+    _write_tree(
+        tree,
+        {
+            "svc.py": """
+            class Service:
+                def resolve(self):
+                    return 1
+
+                def explain(self):
+                    return self.resolve()
+
+
+            def build():
+                return Service()
+            """,
+            "main.py": """
+            from svc import build
+
+
+            def main():
+                return build()
+            """,
+        },
+    )
+    store = CodeStore(db_path=str(tmp_path / "svc.duckdb"), root=str(tree))
+    index_folder(store, tree)
+    return store
+
+
+def test_impact_flags_container_dependents_and_lists_direct_first(tmp_path):
+    store = _service_store(tmp_path)
+    try:
+        result = store.impact("svc.Service.resolve")
+    finally:
+        store.close()
+    flags = {n.node.qualified_name: n.via_container for n in result.affected}
+    assert flags["svc.Service.explain"] is False
+    # build depends on the class, main on build: reached only via containers.
+    assert flags["svc.build"] is True
+    assert flags["main.main"] is True
+    assert result.total_direct == 1
+    assert result.affected[0].node.qualified_name == "svc.Service.explain"
+    direct = [n.via_container for n in result.affected]
+    assert direct == sorted(direct), "direct dependents come first"
+
+
+def test_impact_on_a_path_target_has_no_container_dependents(tmp_path):
+    store = _service_store(tmp_path)
+    try:
+        result = store.impact("svc.py")
+    finally:
+        store.close()
+    assert result.affected
+    assert not any(n.via_container for n in result.affected)
+    assert result.total_direct == result.total_affected
+
+
+def test_impact_limit_keeps_direct_dependents(tmp_path):
+    store = _service_store(tmp_path)
+    try:
+        result = store.impact("svc.Service.resolve", limit=1)
+    finally:
+        store.close()
+    assert [n.node.qualified_name for n in result.affected] == ["svc.Service.explain"]
+    assert result.total_direct == 1
+    assert result.truncated is True
+
+
+def test_related_tests_needs_more_than_a_method_name_or_an_import(tmp_path):
+    tree = tmp_path / "chunks"
+    _write_tree(
+        tree,
+        {
+            "src/models.py": """
+            class Chunk:
+                pass
+            """,
+            "src/markdown.py": """
+            from src.models import Chunk
+
+
+            class MarkdownChunker:
+                def chunk_file(self, path):
+                    return [Chunk()]
+            """,
+            "src/pdf.py": """
+            class PdfChunker:
+                def chunk_file(self, path):
+                    return [path]
+            """,
+            "tests/test_markdown.py": """
+            from src.markdown import MarkdownChunker
+
+
+            def test_markdown():
+                assert MarkdownChunker().chunk_file("a.md")
+            """,
+            "tests/test_pdf.py": """
+            from src.pdf import PdfChunker
+
+
+            def test_pdf():
+                chunker = PdfChunker()
+                assert chunker.chunk_file("a.pdf")
+            """,
+            "tests/test_models.py": """
+            def test_chunk():
+                assert Chunk
+            """,
+        },
+    )
+    store = CodeStore(db_path=str(tmp_path / "chunks.duckdb"), root=str(tree))
+    index_folder(store, tree)
+    try:
+        result = store.related_tests("src/markdown.py")
+    finally:
+        store.close()
+    # test_pdf reaches only `chunk_file` by method name; test_models only the
+    # file's `import Chunk` node. Neither exercises the Markdown chunker.
+    assert {t.node.path for t in result.tests} == {"tests/test_markdown.py"}
