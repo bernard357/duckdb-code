@@ -6,6 +6,30 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
 
 ## Unreleased
 
+### Added
+
+- __Deterministic tool-quality checks.__ `make quality` runs
+  `scripts/check_tool_quality.py`, which calls each MCP tool directly on an
+  index of the four public repositories at pinned commits and asserts on the
+  JSON it returns: expected symbols and paths, precision, list sizes, and a
+  128 KB byte budget per response. The ten cases in
+  `fixtures/benchmarks/tool-checks.yaml` follow the Kilo Code benchmark
+  questions, plus an `impact` size case. Known gaps are marked `xfail` with
+  their issue and reported as FIXED once they pass. The command exits
+  non-zero only on a regression or a tool error. `--stdio` calls over the MCP
+  stdio transport, and `--offline` uses the hashing embedder (#40).
+
+### Fixed
+
+- __`impact` no longer overflows the MCP transport.__ On a high fan-in target
+  in a large index, `impact` returned 10,919 affected nodes (11.8 MB) and the
+  stdio connection closed. The MCP tool now caps each list at `limit` (default
+  50): the nearest affected nodes, the most-affected modules with their full
+  counts and their files, the entry points, and the related tests. It reports
+  the uncapped `total_*` counts and a `truncated` flag, so the same call
+  returns 92 KB. `CodeStore.impact()` and the CLI verb stay unbounded unless
+  given `limit` / `--limit` (#40).
+
 ## v261101
 
 A discovery-strings fix: what an MCP client reads before calling any tool now

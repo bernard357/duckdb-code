@@ -1,0 +1,236 @@
+# Deterministic tool-quality checks for scripts/check_tool_quality.py.
+#
+# Each case calls one duckdb-code MCP tool directly — no model, no agent — on
+# an index of the public corpus below, and asserts on the JSON it returns.
+# The cases follow q01–q09 of kilo-questions.yaml, plus a response-size case
+# for the high fan-in `impact` target that used to close the stdio transport.
+#
+# The corpus is the four public repositories at the commits pinned in
+# kilo-questions.yaml (a test keeps both lists equal), cloned under
+# ~/.cache/duckdb-code/quality/corpus and indexed with that folder as root, so
+# every path below is `<repository>/<path in the repository>`.
+#
+# Check types, each reading a list at `field` (a dotted path into the JSON
+# object, numeric segments index lists) and the value at `key` in each item:
+#
+# - contains_all: every value matches one of the first `within` items.
+# - excludes_any: no item matches any of the values.
+# - equals_set: every item matches a value, and every value matches an item.
+# - count: the list length is `equals`, at least `min`, or at most `max`.
+# - bounded: each list in `totals` holds at most `limit` items and at most
+#   its uncapped total; `truncated` matches.
+# - max_bytes: the serialized response is at most `max` bytes. `max_bytes`
+#   at the top level applies to every case.
+#
+# `where` keeps only the items whose dotted keys match the given values
+# before a check runs (links returns edges in both directions).
+#
+# A value matches an item when the item equals it or ends with `/value` or
+# `.value` (`match: suffix`, the default), or starts with it (`match: prefix`).
+#
+# A check carrying `xfail` is a known gap tracked by that issue: its failure
+# is reported, not counted as a regression, and its passing is reported as
+# FIXED so the marker gets removed. `semantic: true` cases depend on the
+# embedding model and are skipped with --offline.
+
+version: 1
+max_bytes: 131072
+corpus:
+  github_owner: bernard357
+  pinned_commits:
+    duckdb-code: 0664ad4e5426
+    duckdb-vectors: 577427a9e810
+    boringsteps: 8cc1d855a5b9
+    ileap-mcp: 9c83e44afb74
+
+cases:
+  - id: q01
+    question: Where are vector and BM25 rankings fused into one result list?
+    tool: search
+    semantic: true
+    args:
+      query: >-
+        where are the vector-similarity ranking and the BM25 keyword ranking
+        combined into one result list
+      limit: 5
+    checks:
+      - type: contains_all
+        field: results
+        key: node.qualified_name
+        values: [duckdb_vectors.store.VectorStore.query]
+        within: 5
+        xfail:
+          issue: 41
+          reason: the helpers _text_ranking and _vector_ranking outrank the fusing method
+
+  - id: q02
+    question: Which functions call CodeStore._resolve_target directly?
+    tool: impact
+    args:
+      target: store.CodeStore._resolve_target
+      depth: 1
+      limit: 500
+    checks:
+      - type: contains_all
+        field: affected
+        key: node.qualified_name
+        values: &resolve_target_callers
+          - duckdb_code.store.CodeStore.explain
+          - duckdb_code.store.CodeStore.find_similar
+          - duckdb_code.store.CodeStore.history
+          - duckdb_code.store.CodeStore.impact
+          - duckdb_code.store.CodeStore.links
+          - duckdb_code.store.CodeStore.related_tests
+      - type: equals_set
+        field: affected
+        key: node.qualified_name
+        values: *resolve_target_callers
+        xfail:
+          issue: 39
+          reason: a method target seeds its container chain, so depth 1 returns 74 nodes
+
+  - id: q03
+    question: Which tests should run after a change to the Markdown chunker?
+    tool: related_tests
+    args:
+      target: duckdb-vectors/src/duckdb_vectors/chunkers/markdown.py
+    checks:
+      - type: contains_all
+        field: tests
+        key: node.path
+        values:
+          - duckdb-vectors/tests/test_chunkers.py
+          - duckdb-vectors/tests/test_composite_chunker.py
+      - type: excludes_any
+        field: tests
+        key: node.path
+        values:
+          - duckdb-vectors/tests/test_pdf_chunker.py
+          - duckdb-vectors/tests/test_pdf_fixtures.py
+          - duckdb-vectors/tests/test_ranking_sql.py
+        xfail:
+          issue: 39
+          reason: tests reached through shared imports are listed as related
+
+  - id: q04
+    question: Where does duckdb-vectors build its MCP server?
+    tool: find_similar
+    semantic: true
+    args:
+      target: duckdb_code.mcp_server.build_server
+      limit: 5
+    checks:
+      - type: contains_all
+        field: results
+        key: node.qualified_name
+        values: [duckdb_vectors.mcp_server.build_server]
+        within: 5
+
+  - id: q05
+    question: Map the repositories (budget only, overview has no path filter)
+    tool: overview
+    args: {}
+    checks:
+      - type: count
+        field: modules
+        min: 1
+
+  - id: q06
+    question: Which files change together with duckdb-code's store.py?
+    tool: history
+    args:
+      target: duckdb-code/src/duckdb_code/store.py
+    checks:
+      - type: count
+        field: commits
+        min: 1
+        xfail:
+          issue: 38
+          reason: the corpus root holds several repositories but is not one itself
+      - type: contains_all
+        field: co_change
+        key: path
+        values:
+          - src/duckdb_code/models.py
+          - src/duckdb_code/mcp_server.py
+          - src/duckdb_code/cli.py
+        within: 8
+        xfail:
+          issue: 38
+          reason: the corpus root holds several repositories but is not one itself
+
+  - id: q07
+    question: Which duckdb-vectors pages link to the performance guide?
+    tool: links
+    args:
+      target: duckdb-vectors/documentation/performance-guide.md
+    checks:
+      - type: equals_set
+        field: links
+        key: from.path
+        where:
+          to.path: duckdb-vectors/documentation/performance-guide.md
+        values:
+          - duckdb-vectors/documentation/duckdb-vectors-guide.md
+          - duckdb-vectors/documentation/duckdb-vectors-primitive.md
+          - duckdb-vectors/documentation/index.md
+
+  - id: q08
+    question: Which dependency cycles are there in duckdb-code?
+    tool: analytics
+    args:
+      kind: cycles
+    checks:
+      - type: equals_set
+        field: results.0.members
+        key: name
+        values:
+          - _walk_body
+          - _walk_statement
+          - _handle_decorated
+          - _handle_class
+          - _handle_function
+          - _walk_function_body
+      - type: count
+        field: results
+        equals: 1
+        xfail:
+          issue: 39
+          reason: name-suffix matching links unrelated same-named symbols into cycles
+
+  - id: q09
+    question: Which repositories build an MCP server?
+    tool: search
+    semantic: true
+    args:
+      query: build an MCP server and register its tools
+      limit: 10
+    checks:
+      - type: contains_all
+        field: results
+        key: node.path
+        values:
+          - duckdb-code/src/duckdb_code/mcp_server.py
+          - duckdb-vectors/src/duckdb_vectors/mcp_server.py
+          - ileap-mcp/ileap_mcp/server.py
+        within: 10
+      - type: excludes_any
+        field: results
+        key: node.path
+        values: [boringsteps/]
+        match: prefix
+
+  - id: size
+    question: Is impact bounded on a high fan-in target?
+    tool: impact
+    args:
+      target: duckdb-vectors/src/duckdb_vectors/chunkers/markdown.py
+    checks:
+      - type: bounded
+        truncated: true
+        totals:
+          affected: total_affected
+          affected_by_module: total_affected_modules
+          affected_files: total_affected_files
+          affected_entry_points: total_affected_entry_points
+          related_tests: total_related_tests

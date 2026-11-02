@@ -5,6 +5,7 @@ help:
 	@echo "$$ make lint                  - Run Ruff and Markdown lint checks"
 	@echo "$$ make test                  - Run the pytest suite"
 	@echo "$$ make self-test             - Capability evidence: run duckdb-code on its own source"
+	@echo "$$ make quality               - Tool-quality checks on the pinned public corpus"
 	@echo "$$ make build                 - Build the wheel and sdist with uv"
 	@echo "Documentation site:"
 	@echo "$$ make setup-documentation   - Install the VitePress toolchain (npm ci)"
@@ -81,6 +82,10 @@ test:
 self-test:
 	@echo "Running the self-test capability evidence suite..."
 	.venv/bin/python scripts/self_test.py
+
+quality:
+	@echo "Running the tool-quality checks on the pinned public corpus..."
+	.venv/bin/python scripts/check_tool_quality.py $(QUALITY_ARGS)
 
 build:
 	@echo "Building wheel and sdist..."

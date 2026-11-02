@@ -90,6 +90,8 @@ project. Run `make` with no target to list them. The essentials:
 - `make test` — the pytest suite
 - `make self-test` — capability evidence: index the package's own source and run
   labelled requests against it
+- `make quality` — deterministic tool-quality checks on a pinned public corpus
+  (see [How do I check tool quality?](#tool-quality))
 - `make format` — apply Ruff formatting
 - `make build` — build the wheel and sdist with uv
 - `make clean` — remove build artifacts and caches
@@ -143,6 +145,43 @@ package's own `src/duckdb_code/` tree into a throwaway database and runs a
 sequence of labelled requests, each printing a result and asserting a structural
 fact — living evidence that the tool works on a real multi-module codebase. Add
 a test for any behavior you change or add.
+
+## How do I check tool quality? {#tool-quality}
+
+```shell
+$ make quality                              # all cases, default embedder
+$ make quality QUALITY_ARGS="--offline"     # hashing embedder, no semantic cases
+$ make quality QUALITY_ARGS="--stdio --markdown tmp/quality.md"
+```
+
+`make quality` runs `scripts/check_tool_quality.py`. It calls each MCP tool
+directly, with no model or agent, and asserts on the JSON object the tool
+returns. The cases live in `fixtures/benchmarks/tool-checks.yaml` and follow
+questions q01–q09 of the Kilo Code benchmark (see the
+[performance workbook](performance-workbook.md#agent-benefit)). One more case
+checks that `impact` stays bounded on a high fan-in target.
+
+- __Corpus.__ The four public repositories (duckdb-code, duckdb-vectors,
+  boringsteps, ileap-mcp) at the commits pinned in
+  `fixtures/benchmarks/kilo-questions.yaml`. They are cloned under
+  `~/.cache/duckdb-code/quality/corpus`, from `~/Public/<repository>` when
+  present (`--source-root`), else from GitHub, and indexed into a cache
+  database next to it. The index is rebuilt only when the commits, the
+  embedder, or the package source change.
+- __Checks.__ Expected symbols and paths, at a rank (`contains_all` with
+  `within`), precision (`equals_set`, `excludes_any`), list sizes (`count`), the
+  bounds of a truncated `impact` (`bounded`), and a 128 KB byte budget on every
+  response. The fixture header documents each check type.
+- __Transport.__ Calls go in-process through the server's `call_tool` by
+  default. `--stdio` spawns `duckdb-code mcp` and talks MCP over its
+  stdin/stdout; both give the same scorecard.
+- __Known gaps.__ A check marked `xfail` names the issue that tracks it (#38,
+  #39, #41). Its failure is reported as XFAIL. When it starts passing it is
+  reported as FIXED, so remove the marker. The command exits non-zero only on
+  a regression (FAIL) or a tool error (ERROR).
+
+Two runs on the same commit give the same scorecard. Run it before and after a
+change to the indexer, the resolver, or a tool, and read the diff.
 
 ## How are releases cut?
 
