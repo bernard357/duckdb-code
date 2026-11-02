@@ -6,18 +6,31 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
 
 ## Unreleased
 
+A precision and multi-repo release: the graph stops treating name guesses as
+facts, binds Python imports and mines git history per repository in a
+workspace of several repositories, and embeds what each symbol does, all
+measured by a new deterministic tool-quality check that now passes every case.
+The schema moves from v5 to v7, so rebuild existing indexes with
+`duckdb-code index <folder> --rebuild`.
+
 ### Added
 
 - __Deterministic tool-quality checks.__ `make quality` runs
   `scripts/check_tool_quality.py`, which calls each MCP tool directly on an
   index of the four public repositories at pinned commits and asserts on the
   JSON it returns: expected symbols and paths, precision, list sizes, and a
-  128 KB byte budget per response. The ten cases in
+  128 KB byte budget per response. The eleven cases in
   `fixtures/benchmarks/tool-checks.yaml` follow the Kilo Code benchmark
-  questions, plus an `impact` size case. Known gaps are marked `xfail` with
-  their issue and reported as FIXED once they pass. The command exits
-  non-zero only on a regression or a tool error. `--stdio` calls over the MCP
-  stdio transport, and `--offline` uses the hashing embedder (#40).
+  questions, plus an import-binding case and an `impact` size case. Known gaps
+  are marked `xfail` with their issue and reported as FIXED once they pass;
+  none is left in this release. The command exits non-zero only on a
+  regression or a tool error. `--stdio` calls over the MCP stdio transport,
+  and `--offline` uses the hashing embedder (#40).
+- __Kilo Code agent-benefit benchmark.__ `scripts/kilo_benchmark.py` runs each
+  question of `fixtures/benchmarks/kilo-questions.yaml` in Kilo Code without
+  and with `duckdb-code`, reads the session metrics from Kilo Code's database,
+  and reports per-question medians; the method is in the performance workbook,
+  and the Kilo Code runbook is replaced by a verified setup procedure (#37).
 
 ### Fixed
 
@@ -51,9 +64,6 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
   - `related_tests` no longer seeds a file's import nodes, and a test reaching
     a method only by its name counts only if it also reaches the method's
     class.
-
-  Existing indexes keep their old edges until rebuilt: run
-  `duckdb-code index <folder> --rebuild`.
 - __A workspace of several git repositories gets its git signals and its
   imports.__ Indexing a folder that holds repositories without being one, such
   as `~/Public`, used to return no commits, co-change, churn, or diff, and to
@@ -73,8 +83,6 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
     import N` with no node `N` binds to the module `M`, and relative imports
     resolve against their package. On `~/Public`, 4,652 of 13,721 imports
     bind, including every import of the workspace's own packages.
-
-  Rebuild existing indexes with `duckdb-code index <folder> --rebuild`.
 - __`search` sees what a symbol does, and nested decorated functions are
   symbols.__ On the pinned corpus, the method that fuses two rankings ranked
   111th for a question about the fusion, below its own helpers, and the MCP
@@ -90,8 +98,6 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
     decorator on it emits a route.
   - A decorator named by a bare name (`@cache`, `@_described(server)`) is
     recorded as used by the enclosing scope.
-
-  Rebuild existing indexes with `duckdb-code index <folder> --rebuild`.
 
 ## v261101
 
