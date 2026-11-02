@@ -151,11 +151,20 @@ The touched symbols plus their graph neighbourhood — the right primitive for
 code review and PR-description work. Returns
 `{changed: [{id, path, range}], neighbourhood: [{id, path, range, relation}]}`.
 
+On a root holding several git repositories, each repository is diffed and the
+paths are rebased onto the index; a `base` ref is applied to every repository
+that has it, and the others are skipped.
+
 ### `index_status()`
 
 Freshness: the indexed commit and whether the working tree is dirty, read from
 the state the indexer records. Returns
-`{indexed_commit, dirty, indexed_at, node_count, edge_count}`.
+`{indexed_commit, branch, dirty, indexed_at, node_count, edge_count, repositories: [{path, branch, commit, dirty}]}`.
+
+A single-repository root lists no `repositories`. A root holding other
+repositories, such as a workspace folder, lists each one with its own revision
+and dirty flag, and the top-level `dirty` sums them up: true when any is dirty,
+false when all are clean, null when any is unknown.
 
 ## Tool-to-data map {#data-map}
 

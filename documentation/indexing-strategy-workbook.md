@@ -80,6 +80,26 @@ threshold (for example `exact` at or above 0.9, `best_effort` below), so there
 is one scoring concept, defined here and projected into the tool contract —
 never two that can drift.
 
+__Python imports bind by import name, within their repository first.__
+Qualified names are derived from the path under the indexed root, so they
+carry folders that Python never sees: `duckdb-code/src/duckdb_code/store.py`
+is the module `duckdb-code.src.duckdb_code.store`, while code imports
+`duckdb_code.store`. When an import does not match a qualified name, the
+resolver looks it up by import name instead: the dotted path from the module's
+topmost package, the highest directory in an unbroken chain of directories
+holding an indexed `__init__.py`. A module outside any package imports by its
+file stem. The candidates in the importing file's git repository come first,
+because two repositories can define the same import name (both of the
+workspace's Python projects have a `tests` package); only when its repository
+has none does the import bind across repositories, as an installed package
+would. `from M import N`, where `N` is a constant or a re-export rather than a
+node, binds to the module `M`, and a relative import resolves against the
+importing package. The bound name then resolves calls and references through
+the module's local names (0.90), instead of a last-segment guess. On the
+four-repository `make quality` corpus, this takes the imports of the
+workspace's own packages that bind from 0 of 345 to all 345, plus the five
+relative imports.
+
 Type-aware resolution (tracking receiver/expression types for method and
 pointer-heavy calls, as the paper does for Go / C / C++) is a deliberate
 __future, language-scoped__ enhancement: the package targets Python and

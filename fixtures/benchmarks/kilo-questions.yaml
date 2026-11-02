@@ -146,9 +146,11 @@ questions:
       "1": Names `models.py` or `CHANGES.md` only.
       "0": Anything else.
     notes: >-
-      `~/Public` is not itself a git repository, so on an index rooted there
-      `history` returns no commits, co-change partners, or churn. The agent
-      has to fall back on `git log` in arm B as well as arm A.
+      In 261101, `~/Public` is not itself a git repository, so on an index
+      rooted there `history` returns no commits, co-change partners, or
+      churn, and the agent has to fall back on `git log` in arm B as well as
+      arm A. With #38, git history is mined per nested repository, so
+      `history` returns the co-change partners directly.
 
   - id: q07
     category: links

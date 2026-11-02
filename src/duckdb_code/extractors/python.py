@@ -71,6 +71,19 @@ def split_self_target(raw: str) -> tuple[str, str] | None:
     return (class_qn, name) if class_qn and name else None
 
 
+def _join_import(module_path: str, imported: str) -> str:
+    """The raw target of ``from <module_path> import <imported>``.
+
+    ``from . import x`` is ``.x`` and ``from .pkg import x`` is ``.pkg.x``:
+    a module part made only of dots is a relative level, not a name to join.
+    """
+    if not module_path:
+        return imported
+    if not module_path.strip("."):
+        return f"{module_path}{imported}"
+    return f"{module_path}.{imported}"
+
+
 # Statements that open a new scope: their bodies are not the function's locals.
 _SCOPE_TYPES = frozenset({"function_definition", "class_definition", "lambda"})
 # Tuple/list targets whose identifiers are all bound by the assignment.
@@ -398,14 +411,13 @@ class _PythonBuilder:
         ]
         for child in names:
             if child.type == "dotted_name":
-                imported = self._dotted(child)
-                raw = f"{module_path}.{imported}" if module_path else imported
+                raw = _join_import(module_path, self._dotted(child))
                 self._emit_import(raw, raw)
             elif child.type == "aliased_import":
                 name_node = child.child_by_field_name("name")
                 imported = self._dotted(name_node) if name_node else ""
                 if imported:
-                    raw = f"{module_path}.{imported}" if module_path else imported
+                    raw = _join_import(module_path, imported)
                     self._emit_import(raw, raw)
             elif child.type == "wildcard_import":
                 continue

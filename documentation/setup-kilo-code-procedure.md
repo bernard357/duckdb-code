@@ -180,6 +180,8 @@ The agent sees the graph as of the last build; `index_status` tells it when that
 - __Live refresh.__ `duckdb-code watch <folder> --db <database>` re-indexes on every relevant file change, with the same ignore rules as `index`. Run it from a dedicated terminal or a VS Code task.
 - __On demand.__ Re-run `duckdb-code index <folder> --db <database>` yourself, from a VS Code task, or from git hooks. The index records the current branch and commit, so a re-index after `git checkout` brings the graph to the new branch.
 
+__A workspace of several repositories.__ When the indexed folder holds several git repositories but is not one itself, such as `~/Public`, the index records each repository it finds. `index_status` then lists them in `repositories`, each with its branch, commit, and dirty flag, and its top-level `dirty` is true as soon as any repository has uncommitted changes. A re-index after a `git checkout` in any of them is enough to bring the graph back in line.
+
 A VS Code task, in `.vscode/tasks.json`, run from the Command Palette:
 
 ```json

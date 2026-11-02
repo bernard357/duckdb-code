@@ -237,6 +237,13 @@ speed-up, because the cheapest work is the work you never do. The traversal
 verdict above (`WITH RECURSIVE`) was measured on the larger pre-fix graph; it
 holds regardless, since it is a relative comparison on the same substrate.
 
+__Git history per repository.__ `~/Public` is not a git repository itself but
+holds 17, counting the ones nested under `_obsolete/` and `temp/`. Mining each
+one's last 500 commits takes 1.1 s in total, the slowest at 0.28 s for a
+repository with a full 500-commit window, so the per-repository `git log`
+calls are noise next to the 3 min 46 s full index. `index_status` runs one
+`git status` per repository and answers in about a second.
+
 ## Does an agent benefit? Kilo Code on ~/Public {#agent-benefit}
 
 The sections above show that `duckdb-code` indexes and queries a large tree quickly. They do not show that a coding agent is better off with it. Its tool descriptions add tokens to every request, and an agent may ignore the tools and fall back on `bash` and file reads. This section measures the effect directly: the same questions put to Kilo Code with and without `duckdb-code`, comparing tokens, latency, and answer quality.

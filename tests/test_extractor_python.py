@@ -136,3 +136,16 @@ def test_module_level_function_has_no_self_receiver():
     source = "def run(self):\n    return self.go()\n"
     extraction = PythonExtractor().extract(source, "m.py")
     assert _raw_from(extraction, "run", "calls") == ["go"]
+
+
+def test_relative_imports_keep_their_level():
+    source = (
+        "from . import sibling\nfrom .config import Settings\nfrom .. import parent\n"
+    )
+    extraction = PythonExtractor().extract(source, "pkg/sub/mod.py")
+    # One leading dot per level: `.` is the package, `..` its parent.
+    assert _raw_targets(extraction, "imports") == [
+        "..parent",
+        ".config.Settings",
+        ".sibling",
+    ]

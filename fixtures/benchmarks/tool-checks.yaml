@@ -69,7 +69,6 @@ cases:
     args:
       target: store.CodeStore._resolve_target
       depth: 1
-      limit: 500
     checks:
       - type: contains_all
         field: affected
@@ -140,9 +139,6 @@ cases:
       - type: count
         field: commits
         min: 1
-        xfail:
-          issue: 38
-          reason: the corpus root holds several repositories but is not one itself
       - type: contains_all
         field: co_change
         key: path
@@ -151,9 +147,6 @@ cases:
           - src/duckdb_code/mcp_server.py
           - src/duckdb_code/cli.py
         within: 8
-        xfail:
-          issue: 38
-          reason: the corpus root holds several repositories but is not one itself
 
   - id: q07
     question: Which duckdb-vectors pages link to the performance guide?
@@ -212,6 +205,24 @@ cases:
         key: node.path
         values: [boringsteps/]
         match: prefix
+
+  - id: imports
+    question: Which functions use CodeStore through their import of it?
+    tool: impact
+    args:
+      target: duckdb_code.store.CodeStore
+      depth: 1
+    checks:
+      - type: contains_all
+        field: affected
+        key: node.qualified_name
+        where:
+          via_container: "False"
+        values:
+          - duckdb_code.cli.index
+          - duckdb_code.cli.watch
+          - duckdb_code.cli.mcp
+          - duckdb_code.mcp_server.build_server
 
   - id: size
     question: Is impact bounded on a high fan-in target?

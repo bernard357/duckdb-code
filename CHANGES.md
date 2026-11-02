@@ -54,6 +54,27 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
 
   Existing indexes keep their old edges until rebuilt: run
   `duckdb-code index <folder> --rebuild`.
+- __A workspace of several git repositories gets its git signals and its
+  imports.__ Indexing a folder that holds repositories without being one, such
+  as `~/Public`, used to return no commits, co-change, churn, or diff, and to
+  bind almost no Python import (60 of 13,618 there) (#38).
+  - The indexer records every git repository holding indexed files (schema
+    v6, a `repositories` table) and mines each one's history, so `history`,
+    churn, and `analytics hotspots` work across the workspace. On `~/Public`,
+    17 repositories add 1.1 s of `git log`.
+  - `index_status` lists `repositories` (path, branch, commit, dirty) on such
+    a root, and its top-level `dirty` sums them up. A single-repository root
+    is unchanged.
+  - `context_for_change` diffs each repository and applies `base` to those
+    that have the ref.
+  - Python imports bind by import name, from the module's topmost
+    `__init__.py` package, so a `src/` layout or a repository folder no longer
+    hides them, and within the importing file's repository first. `from M
+    import N` with no node `N` binds to the module `M`, and relative imports
+    resolve against their package. On `~/Public`, 4,652 of 13,721 imports
+    bind, including every import of the workspace's own packages.
+
+  Rebuild existing indexes with `duckdb-code index <folder> --rebuild`.
 
 ## v261101
 

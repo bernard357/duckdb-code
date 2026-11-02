@@ -170,7 +170,7 @@ def test_committed_fixture_loads_and_pins_the_benchmark_commits(checker):
     questions = yaml.safe_load(QUESTIONS.read_text(encoding="utf-8"))
     assert suite.corpus.pinned_commits == questions["pinned_commits"]
     ids = [case.id for case in suite.cases]
-    assert ids == [f"q0{n}" for n in range(1, 10)] + ["size"]
+    assert ids == [f"q0{n}" for n in range(1, 10)] + ["imports", "size"]
     assert suite.max_bytes == 131072
     # Each known gap names the issue that tracks it and why it fails today;
     # the set shrinks as issues land, so it is not pinned here.

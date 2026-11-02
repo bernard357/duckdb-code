@@ -476,3 +476,118 @@ def test_unique_suffix_bind_is_stronger_than_an_ambiguous_one():
     # `visit` names two methods: both binds stay at the suffix level.
     assert confidence_of["function:m.Walker.visit@m.py:8"] == 0.55
     assert confidence_of["function:n.Other.visit@n.py:3"] == 0.55
+
+
+def _module_nodes(path, symbols=()):
+    """A Python file's file + module nodes (path-derived qns) and symbols."""
+    module_qn = path[: -len(".py")].replace("/", ".")
+    if module_qn.endswith(".__init__"):
+        module_qn = module_qn[: -len(".__init__")]
+    nodes = [
+        _node("file", path, path),
+        _node("module", module_qn, path),
+    ]
+    for line, (kind, name) in enumerate(symbols, start=2):
+        nodes.append(_node(kind, f"{module_qn}.{name}", path, line))
+    return nodes
+
+
+def _import_edge(importer_path, raw, nodes):
+    module = next(n for n in nodes if n.kind == "module" and n.path == importer_path)
+    imp = _node("import", f"{module.qualified_name}::import:{raw}", importer_path)
+    nodes.append(imp)
+    return imp, _unresolved(imp.node_id, raw, "imports", importer_path)
+
+
+def _two_repositories():
+    """Repos `a` (src layout) and `b` (flat), both with a `tests` package."""
+    nodes = [
+        *_module_nodes("a/src/pkg/__init__.py"),
+        *_module_nodes("a/src/pkg/store.py", [("class", "Store")]),
+        *_module_nodes("a/tests/__init__.py"),
+        *_module_nodes("a/tests/test_indexer.py", [("function", "helper")]),
+        *_module_nodes("a/tests/test_store.py"),
+        *_module_nodes("a/scripts/tool.py", [("function", "run")]),
+        *_module_nodes("b/lib/__init__.py"),
+        *_module_nodes("b/lib/config.py", [("class", "Settings")]),
+        *_module_nodes("b/lib/app.py"),
+        *_module_nodes("b/tests/__init__.py"),
+        *_module_nodes("b/tests/test_indexer.py", [("function", "helper")]),
+        *_module_nodes("b/tests/test_app.py"),
+    ]
+    return nodes, ["a", "b"]
+
+
+def _bound(nodes, edge, repositories):
+    resolved = _edges_of_kind(resolve_edges(nodes, [edge], repositories), "imports")
+    return [(e.dst_id, e.confidence) for e in resolved]
+
+
+def test_src_and_flat_layout_imports_bind_by_import_name():
+    nodes, repos = _two_repositories()
+    _imp, src_edge = _import_edge("a/tests/test_store.py", "pkg.store.Store", nodes)
+    _imp, flat_edge = _import_edge("b/lib/app.py", "lib.config.Settings", nodes)
+    assert _bound(nodes, src_edge, repos) == [
+        ("class:a.src.pkg.store.Store@a/src/pkg/store.py:2", 0.95)
+    ]
+    assert _bound(nodes, flat_edge, repos) == [
+        ("class:b.lib.config.Settings@b/lib/config.py:2", 0.95)
+    ]
+
+
+def test_same_import_name_binds_within_the_importing_repository():
+    nodes, repos = _two_repositories()
+    raw = "tests.test_indexer.helper"
+    _imp, from_a = _import_edge("a/tests/test_store.py", raw, nodes)
+    _imp, from_b = _import_edge("b/tests/test_app.py", raw, nodes)
+    assert _bound(nodes, from_a, repos) == [
+        ("function:a.tests.test_indexer.helper@a/tests/test_indexer.py:2", 0.95)
+    ]
+    assert _bound(nodes, from_b, repos) == [
+        ("function:b.tests.test_indexer.helper@b/tests/test_indexer.py:2", 0.95)
+    ]
+
+
+def test_import_with_no_module_in_its_repository_binds_across():
+    nodes, repos = _two_repositories()
+    _imp, edge = _import_edge("b/lib/app.py", "pkg.store.Store", nodes)
+    assert _bound(nodes, edge, repos) == [
+        ("class:a.src.pkg.store.Store@a/src/pkg/store.py:2", 0.95)
+    ]
+
+
+def test_module_outside_any_package_imports_by_its_stem():
+    nodes, repos = _two_repositories()
+    _imp, edge = _import_edge("a/tests/test_store.py", "tool.run", nodes)
+    assert _bound(nodes, edge, repos) == [
+        ("function:a.scripts.tool.run@a/scripts/tool.py:2", 0.95)
+    ]
+
+
+def test_import_of_a_name_that_is_not_a_node_binds_to_its_module():
+    # `from pkg import VERSION`: a constant or re-export, not an indexed node.
+    nodes, repos = _two_repositories()
+    _imp, edge = _import_edge("a/tests/test_store.py", "pkg.VERSION", nodes)
+    assert _bound(nodes, edge, repos) == [
+        ("module:a.src.pkg@a/src/pkg/__init__.py:1", 0.95)
+    ]
+
+
+def test_relative_import_resolves_against_the_importing_package():
+    nodes, repos = _two_repositories()
+    _imp, edge = _import_edge("b/lib/app.py", ".config.Settings", nodes)
+    assert _bound(nodes, edge, repos) == [
+        ("class:b.lib.config.Settings@b/lib/config.py:2", 0.95)
+    ]
+
+
+def test_bound_import_lets_a_bare_call_bind_through_the_local_name():
+    nodes, repos = _two_repositories()
+    _imp, edge = _import_edge("b/lib/app.py", "lib.config.Settings", nodes)
+    caller = _node("function", "b.lib.app.main", "b/lib/app.py", 5)
+    nodes.append(caller)
+    call = _unresolved(caller.node_id, "Settings", "calls", "b/lib/app.py")
+    calls = _edges_of_kind(resolve_edges(nodes, [edge, call], repos), "calls")
+    assert [(e.dst_id, e.confidence) for e in calls] == [
+        ("class:b.lib.config.Settings@b/lib/config.py:2", 0.90)
+    ]

@@ -471,6 +471,21 @@ class AnalyticsResult(BaseModel):
     results: list[AnalyticsItem]
 
 
+class RepositoryStatus(BaseModel):
+    """One git repository under an index root, in an ``index_status`` result.
+
+    Listed when the root holds repositories other than itself (a multi-repo
+    workspace). ``path`` is folder-relative, ``branch``/``commit`` are the
+    revision it was indexed at, and ``dirty`` is its working-tree state at
+    query time (``None`` when unknown).
+    """
+
+    path: str
+    branch: str | None = None
+    commit: str | None = None
+    dirty: bool | None = None
+
+
 class IndexStatus(BaseModel):
     """The result of an ``index_status`` query: index freshness and size.
 
@@ -480,6 +495,11 @@ class IndexStatus(BaseModel):
     it is ``None`` when git is unavailable or the root is not a repo, so an
     unknown state is never reported as clean. ``indexed_at`` is the most recent
     file stamp (ISO string). ``node_count``/``edge_count`` are the index totals.
+
+    On a root holding several repositories, ``repositories`` lists each one,
+    and ``dirty`` sums them up: ``True`` when any is dirty, ``False`` when all
+    are clean, ``None`` when any is unknown. A single-repository root lists
+    none and keeps the fields above.
     """
 
     indexed_commit: str | None = None
@@ -488,6 +508,7 @@ class IndexStatus(BaseModel):
     indexed_at: str | None = None
     node_count: int = 0
     edge_count: int = 0
+    repositories: list[RepositoryStatus] = []
 
 
 class ChangedSymbol(BaseModel):

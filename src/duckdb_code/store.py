@@ -49,6 +49,7 @@ from duckdb_code.models import (
     RelatedTest,
     RelatedTestsResult,
     Report,
+    RepositoryStatus,
     SearchHit,
     SearchResult,
 )
@@ -245,6 +246,15 @@ def _strongly_connected_components(
     return components
 
 
+def _any_dirty(flags: list[bool | None]) -> bool | None:
+    """Sum up repository dirty flags: any dirty, else unknown if any unknown."""
+    if any(flag is True for flag in flags):
+        return True
+    if any(flag is None for flag in flags):
+        return None
+    return False
+
+
 def _working_tree_dirty(root: str) -> bool | None:
     """Return whether ``root``'s git working tree has uncommitted changes.
 
@@ -433,6 +443,13 @@ SCHEMA_DDL = (
         ordinal      INTEGER NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS repositories (
+        path        TEXT NOT NULL PRIMARY KEY,
+        branch      TEXT,
+        head_commit TEXT
+    )
+    """,
 )
 
 # Read-write-only indexes. No ``idx_files_path`` — the ``files.path`` primary
@@ -453,9 +470,11 @@ INDEX_DDL = (
 # backing semantic search. Version 4 added ``files.churn`` (per-file commit
 # count) and the ``file_changes_with`` edge kind (git co-change between files).
 # Version 5 adds the ``commits`` table (recent git commits per file, for the
-# ``history`` tool). A store opened against an older file recreates the schema
-# on the next full index.
-SCHEMA_VERSION = 5
+# ``history`` tool). Version 6 adds the ``repositories`` table (the git
+# repositories found under the root, ``""`` for a root that is one), so git
+# data is gathered and Python imports bind per repository. A store opened
+# against an older file recreates the schema on the next full index.
+SCHEMA_VERSION = 6
 
 
 class CodeStore:
@@ -1517,6 +1536,22 @@ class CodeStore:
         root = meta.get("root") or self.settings.root
         head_commit = meta.get("head_commit")
         dirty = _working_tree_dirty(root) if root else None
+        rows = self._repository_rows()
+        repositories: list[RepositoryStatus] = []
+        # A single-repository root keeps the top-level fields only; a root
+        # holding other repositories lists each with its own dirty flag.
+        if root and any(path for path, _branch, _commit in rows):
+            repositories = [
+                RepositoryStatus(
+                    path=path,
+                    branch=branch,
+                    commit=commit,
+                    dirty=_working_tree_dirty(str(Path(root) / path) if path else root),
+                )
+                for path, branch, commit in rows
+            ]
+            if not any(r.path == "" for r in repositories):
+                dirty = _any_dirty([r.dirty for r in repositories])
         return IndexStatus(
             indexed_commit=head_commit,
             branch=meta.get("branch"),
@@ -1524,7 +1559,17 @@ class CodeStore:
             indexed_at=indexed_at,
             node_count=node_count,
             edge_count=edge_count,
+            repositories=repositories,
         )
+
+    def _repository_rows(self) -> list[tuple[str, str | None, str | None]]:
+        """The recorded repositories as ``(path, branch, head_commit)``, by path."""
+        return [
+            (row[0], row[1], row[2])
+            for row in self._con.execute(
+                "SELECT path, branch, head_commit FROM repositories ORDER BY path"
+            ).fetchall()
+        ]
 
     def context_for_change(self, base: str | None = None) -> ContextForChange:
         """Return the symbols a change touches plus their direct neighbours.
@@ -1553,7 +1598,14 @@ class CodeStore:
         label = base if base else "working-tree"
         if not root:
             return ContextForChange(base=label, changed=[], neighbourhood=[])
-        ranges = _git_changed_ranges(root, base)
+        # Diff each repository under the root (the root itself when none was
+        # recorded); one without the `base` ref yields nothing and is skipped.
+        repositories = [path for path, _b, _c in self._repository_rows()] or [""]
+        ranges: dict[str, list[tuple[int, int]]] = {}
+        for repo in repositories:
+            location = str(Path(root) / repo) if repo else root
+            for rel, spans in _git_changed_ranges(location, base).items():
+                ranges.setdefault(f"{repo}/{rel}" if repo else rel, []).extend(spans)
         changed = self._nodes_overlapping(ranges)
         changed_ids = {node.node_id for node in changed}
         neighbourhood = self._one_hop_neighbourhood(changed_ids)

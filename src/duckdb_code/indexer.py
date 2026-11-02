@@ -153,8 +153,14 @@ def _module_of_path(path: str, by_path_module: dict[str, str]) -> str | None:
     return by_path_module.get(path)
 
 
-def resolve_edges(nodes: list[Node], edges: list[Edge]) -> list[Edge]:
+def resolve_edges(
+    nodes: list[Node], edges: list[Edge], repositories: list[str] | None = None
+) -> list[Edge]:
     """Resolve the unresolved cross-file edges against a symbol table.
+
+    ``repositories`` are the folder-relative paths of the git repositories in
+    the index (``""`` for a root that is one); a Python import binds by import
+    name within the importing file's repository first.
 
     Pure function (no DuckDB): deterministic and unit-testable in isolation. The
     order is load-bearing — ``by_qn``/``by_module`` are built first, the
@@ -214,6 +220,8 @@ def resolve_edges(nodes: list[Node], edges: list[Edge]) -> list[Edge]:
         if edge.kind == "defines":
             resolved.append(edge)
 
+    import_names = _ImportNames(nodes, by_path_module, repositories)
+
     # Phase A: imports. Each successful binding also inserts the bound local
     # name into the import half of by_local.
     for edge in edges:
@@ -230,8 +238,11 @@ def resolve_edges(nodes: list[Node], edges: list[Edge]) -> list[Edge]:
                 resolved.append(_bind(edge, hit, CONFIDENCE_SUFFIX))
             continue
         # Python import: try "from M import N" -> by_qn["M.N"], else the dotted
-        # path as a module -> by_module; else the head module.
+        # path as a module -> by_module; else by import name, which drops a
+        # `src/` or repository folder from the path-derived qualified names.
         targets, confidence = _resolve_python_import(raw, by_qn, by_module)
+        if not targets and src is not None:
+            targets, confidence = import_names.resolve(raw, src.path)
         for target in targets:
             resolved.append(_bind(edge, target, confidence))
             if module_qn is not None:
@@ -239,7 +250,8 @@ def resolve_edges(nodes: list[Node], edges: list[Edge]) -> list[Edge]:
                 by_local.setdefault((module_qn, bound), []).append(target)
                 # import M also binds the head name M.
                 head = raw.split(".")[0]
-                by_local.setdefault((module_qn, head), []).append(target)
+                if head:
+                    by_local.setdefault((module_qn, head), []).append(target)
 
     # Phase B: inherits, then calls/references. Reads by_local, never mutates it.
     for edge in edges:
@@ -559,6 +571,126 @@ def _bind(edge: Edge, dst_id: str, confidence: float) -> Edge:
     )
 
 
+def _import_name(path: str, packages: set[str]) -> str:
+    """The dotted name Python code imports the module at ``path`` by.
+
+    It starts at the module's topmost package (the highest directory in an
+    unbroken chain of directories holding an indexed ``__init__.py``), so a
+    ``src/`` folder or a repository folder above the package drops out:
+    ``repo/src/pkg/store.py`` imports as ``pkg.store``. A module outside any
+    package imports by its file stem; a package imports by its directory.
+    """
+    pure = PurePosixPath(path)
+    folders = pure.parent.parts
+    parts = list(folders) if pure.stem == "__init__" else [*folders, pure.stem]
+    start = len(folders)
+    while start > 0 and "/".join(folders[:start]) in packages:
+        start -= 1
+    return ".".join(parts[start:])
+
+
+class _ImportNames:
+    """Import-name lookups for the Python modules and symbols of one index.
+
+    ``by_import`` maps an import name (``pkg.store.Store``) to the node ids
+    that carry it, ``module_ids`` holds the module node ids, ``of_path`` maps
+    a file path to its module's import name, and ``scope_of`` maps a path to
+    the repository holding it, so an import binds within its repository first.
+    """
+
+    def __init__(
+        self,
+        nodes: list[Node],
+        by_path_module: dict[str, str],
+        repositories: list[str] | None,
+    ) -> None:
+        python_files = [
+            n.path for n in nodes if n.kind == "file" and n.language == "python"
+        ]
+        packages = {
+            PurePosixPath(p).parent.as_posix()
+            for p in python_files
+            if PurePosixPath(p).name == "__init__.py"
+        }
+        self.of_path = {p: _import_name(p, packages) for p in python_files}
+        self.by_import: dict[str, list[str]] = {}
+        self.module_ids: set[str] = set()
+        for node in nodes:
+            if node.language != "python" or node.kind not in (
+                "module",
+                "class",
+                "function",
+            ):
+                continue
+            module_qn = by_path_module.get(node.path)
+            name = self.of_path.get(node.path)
+            if not module_qn or not name:
+                continue
+            if node.kind == "module":
+                self.module_ids.add(node.node_id)
+            if node.qualified_name == module_qn:
+                key = name
+            elif node.qualified_name.startswith(module_qn + "."):
+                key = name + node.qualified_name[len(module_qn) :]
+            else:
+                continue
+            self.by_import.setdefault(key, []).append(node.node_id)
+        # Longest repository first, so a nested repository wins over its parent.
+        self._repositories = sorted(repositories or [], key=len, reverse=True)
+        self._path_of_id = {n.node_id: n.path for n in nodes}
+
+    def scope_of(self, path: str) -> str:
+        for repo in self._repositories:
+            if not repo or path == repo or path.startswith(repo + "/"):
+                return repo
+        return ""
+
+    def absolute(self, raw: str, importer_path: str) -> str | None:
+        """Resolve a relative import (``.config.Settings``) to an absolute one."""
+        if not raw.startswith("."):
+            return raw
+        rest = raw.lstrip(".")
+        level = len(raw) - len(rest)
+        importer = self.of_path.get(importer_path)
+        if importer is None:
+            return None
+        package = importer.split(".") if importer else []
+        if PurePosixPath(importer_path).name != "__init__.py":
+            package = package[:-1]
+        if level - 1 > len(package):
+            return None
+        package = package[: len(package) - (level - 1)]
+        return ".".join([*package, rest] if rest else package) or None
+
+    def resolve(self, raw: str, importer_path: str) -> tuple[list[str], float]:
+        """Bind an import by import name, the importer's repository first.
+
+        ``from M import N`` with no node ``M.N`` (a constant, a re-export)
+        binds to the module ``M``. One candidate in the importer's repository
+        is import-confident; with none there, the candidates elsewhere are
+        used, as an installed package would be; several stay at suffix level.
+        """
+        name = self.absolute(raw, importer_path)
+        if not name:
+            return [], CONFIDENCE_SUFFIX
+        candidates = self.by_import.get(name, [])
+        if not candidates:
+            parent = name.rpartition(".")[0]
+            candidates = [
+                nid for nid in self.by_import.get(parent, []) if nid in self.module_ids
+            ]
+        if not candidates:
+            return [], CONFIDENCE_SUFFIX
+        scope = self.scope_of(importer_path)
+        same = [
+            nid
+            for nid in candidates
+            if self.scope_of(self._path_of_id.get(nid, "")) == scope
+        ]
+        pool = same or candidates
+        return pool, (CONFIDENCE_IMPORT if len(pool) == 1 else CONFIDENCE_SUFFIX)
+
+
 def _resolve_python_import(
     raw: str, by_qn: dict[str, list[str]], by_module: dict[str, str]
 ) -> tuple[list[str], float]:
@@ -785,6 +917,31 @@ def _dedup_nodes(nodes: list[Node]) -> list[Node]:
     return unique
 
 
+def _discover_repositories(
+    folder: Path, file_rows: list[tuple[str, str, str]]
+) -> list[str]:
+    """The git repositories holding indexed files, as folder-relative paths.
+
+    ``""`` stands for the indexed folder itself when it sits in a repository
+    (found by walking up). Every directory that holds an indexed file, and each
+    of its ancestors below the folder, is checked for a ``.git`` entry, so a
+    folder the walk ignored is never probed. Sorted, so the list is stable.
+    """
+    repositories = [""] if _find_git_dir(folder) is not None else []
+    directories: set[str] = set()
+    for rel, _language, _etag in file_rows:
+        parent = PurePosixPath(rel).parent
+        while (
+            parent.as_posix() not in (".", "") and parent.as_posix() not in directories
+        ):
+            directories.add(parent.as_posix())
+            parent = parent.parent
+    repositories.extend(
+        d for d in sorted(directories) if (folder / d / ".git").exists()
+    )
+    return repositories
+
+
 def _full_index(
     store: CodeStore,
     folder: Path,
@@ -798,9 +955,12 @@ def _full_index(
     file_rows, all_nodes, all_edges, languages, skipped = _extract_folder(
         folder, recursive, use_default_ignores=use_default_ignores
     )
-    resolved_edges = resolve_edges(all_nodes, all_edges)
+    repositories = _discover_repositories(folder, file_rows)
+    resolved_edges = resolve_edges(all_nodes, all_edges, repositories)
     resolved_edges.extend(enrich_test_edges(all_nodes, resolved_edges))
-    _write(store, file_rows, all_nodes, resolved_edges, build_stamp, folder)
+    _write(
+        store, file_rows, all_nodes, resolved_edges, build_stamp, folder, repositories
+    )
     _finalize(store)
 
     return IndexReport(
@@ -856,10 +1016,13 @@ def _incremental_index(
         return _noop_report(store, skipped, mode="incremental")
 
     build_stamp = datetime.datetime.now(datetime.UTC)
-    resolved_edges = resolve_edges(all_nodes, all_edges)
+    repositories = _discover_repositories(folder, file_rows)
+    resolved_edges = resolve_edges(all_nodes, all_edges, repositories)
     resolved_edges.extend(enrich_test_edges(all_nodes, resolved_edges))
     _recreate_tables(store)
-    _write(store, file_rows, all_nodes, resolved_edges, build_stamp, folder)
+    _write(
+        store, file_rows, all_nodes, resolved_edges, build_stamp, folder, repositories
+    )
     _finalize(store)
 
     return IndexReport(
@@ -1071,7 +1234,15 @@ def _recreate_tables(store: CodeStore) -> None:
     ``_ensure_schema`` agree.
     """
     con = store._con
-    for table in ("edges", "nodes", "files", "meta", "vectors", "commits"):
+    for table in (
+        "edges",
+        "nodes",
+        "files",
+        "meta",
+        "vectors",
+        "commits",
+        "repositories",
+    ):
         con.execute(f"DROP TABLE IF EXISTS {table}")
     for ddl in SCHEMA_DDL:
         con.execute(ddl)
@@ -1304,7 +1475,18 @@ def _compute_co_change(store: CodeStore) -> None:
     if not root:
         return
 
-    commits = _git_log_commits(Path(root))
+    # One git log per repository under the root (a root that is one is ""),
+    # each over its own commit window, with paths rebased onto the index.
+    repositories = [
+        row[0]
+        for row in con.execute("SELECT path FROM repositories ORDER BY path").fetchall()
+    ]
+    commits: list[_CommitRecord] = []
+    for repo in repositories:
+        for commit in _git_log_commits(Path(root) / repo if repo else Path(root)):
+            if repo:
+                commit.files = [f"{repo}/{f}" for f in commit.files]
+            commits.append(commit)
     if not commits:
         return
 
@@ -1459,8 +1641,9 @@ def _write(
     edges: list[Edge],
     build_stamp: datetime.datetime,
     folder: Path,
+    repositories: list[str] | None = None,
 ) -> None:
-    """Bulk-insert files, nodes, edges and persist meta.
+    """Bulk-insert files, nodes, edges and persist meta and repositories.
 
     FIX 3: every ``files`` row carries ``stamped_at`` set to the build-start
     time. It is WRITTEN but not read in v1 — it is reserved for the incremental
@@ -1517,6 +1700,12 @@ def _write(
         "INSERT INTO meta (key, value) VALUES (?, ?)",
         ["root", str(folder)],
     )
+    for repo in repositories or []:
+        repo_branch, repo_commit = _git_revision(folder / repo if repo else folder)
+        con.execute(
+            "INSERT INTO repositories (path, branch, head_commit) VALUES (?, ?, ?)",
+            [repo, repo_branch, repo_commit],
+        )
     branch, head_commit = _git_revision(folder)
     if branch is not None:
         con.execute("INSERT INTO meta (key, value) VALUES (?, ?)", ["branch", branch])

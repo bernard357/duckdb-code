@@ -281,8 +281,11 @@ def test_index_status_tool_returns_one_status(indexed_db):
         "indexed_at",
         "node_count",
         "edge_count",
+        "repositories",
     }
     assert payload["node_count"] > 0
+    # A fixture outside any repository, or a single-repository root, lists none.
+    assert payload["repositories"] == []
 
 
 def test_context_for_change_tool_returns_the_contract_shape(indexed_db):
