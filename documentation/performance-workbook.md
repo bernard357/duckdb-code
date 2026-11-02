@@ -57,11 +57,15 @@ Indexing resolves cross-file edges and writes the graph. Both must scale with
 `nodes + edges`, never with their product, and must persist in bulk. Two fixes
 took a 2,768-file repository from "did not finish in 5+ minutes" to __~65 s__
 (see [graph indexing](#graph-indexing)): an indexed last-segment lookup replaced
-a per-edge full-table scan, and an edge-fan-out cap plus `executemany` bulk
-inserts replaced a 166k→598k best-effort edge explosion written one row at a
-time (~236 s of inserts alone). You do not configure any of this — it is why a
+a per-edge full-table scan, and an edge-fan-out cap replaced a 166k→598k
+best-effort edge explosion written one row at a time (~236 s of inserts alone).
+Writing then still bound one row at a time through `executemany`, three
+quarters of a full `~/Public` build; loading each table as numpy columns in one
+statement took that build from __243 s to 31 s__ (see
+[bulk loading](#bulk-loading)). You do not configure any of this — it is why a
 real codebase indexes in seconds rather than hanging — but the rule generalizes
-to any DuckDB-backed tool: resolve set-based, cap noisy fan-out, write in bulk.
+to any DuckDB-backed tool: resolve set-based, cap noisy fan-out, write columns,
+not rows.
 
 ### 3. Query with graph techniques in the engine
 
@@ -123,9 +127,11 @@ Edges fell from 598k to ~98k.
 
 __Cause 3 — row-by-row inserts.__ Even the legitimate edge set was written with
 one `execute` per row — one round-trip to DuckDB per edge. At 600k edges this
-alone extrapolated to ~236 s; `executemany` bulk inserts the same rows far
-faster. __Fix:__ bulk-insert nodes and edges with `executemany` (guarded for the
-empty-index case, which `executemany` rejects).
+alone extrapolated to ~236 s. __Fix (first):__ insert nodes and edges with
+`executemany`, which removed the per-call overhead but, as measured later, still
+binds every row one by one: 74 s for 234,000 edge rows. __Fix (since #42):__
+load each table as numpy columns scanned by one `INSERT … SELECT`, 0.23 s for
+the same rows (see [bulk loading](#bulk-loading)).
 
 With all three fixes the same repository indexes in __~65 s__ (13 s extract,
 fast resolve, bulk write of ~98k edges) instead of never finishing.
@@ -133,9 +139,54 @@ fast resolve, bulk write of ~98k edges) instead of never finishing.
 __Rules of thumb.__ (1) Resolution cost must scale with `nodes + edges`, never
 `nodes × edges` — index the fallback, do not scan it. (2) A best-effort match
 that fans out to many candidates is noise; cap it rather than fabricate a dense
-sub-graph. (3) Persist in bulk (`executemany`/`INSERT ... SELECT`), never one
-round-trip per row. A single slow phase can hide behind another, so bisect by
-phase before optimizing.
+sub-graph. (3) Persist as columns (numpy arrays scanned by `INSERT … SELECT`),
+never row by row, and `executemany` counts as row by row. A single slow phase
+can hide behind another, so bisect by phase before optimizing.
+
+## Bulk loading: columns, not rows {#bulk-loading}
+
+`executemany` reads like a bulk insert, but DuckDB's Python client binds and
+inserts each row of it in turn. Measured on 234,000 rows shaped like the
+`edges` table (six columns, empty table, same rows checked after each path):
+
+| Path | Time | Extra dependency |
+| --- | --- | --- |
+| `executemany` | 74.41 s | none |
+| multi-row `VALUES`, 1,000 rows per statement | 15.24 s | none |
+| CSV file + `COPY` | 0.74 s | none |
+| dict of numpy arrays, one `INSERT … SELECT` | 0.23 s | numpy |
+
+__Decision (shipped, #42).__ Every bulk write in the indexer goes through one
+helper that builds a numpy column per field and inserts the registered
+relation in one statement, and the per-row `UPDATE`s of centrality and churn
+became one `UPDATE … FROM`. Typed arrays carry floats and integers; strings,
+NULLs, and timezone-aware timestamps travel as object arrays and land in the
+same types as before, with no cast. The `embedding` lists are placed one by one
+into a 1-D object array, because `np.array` would turn equal-length lists into a
+2-D array that DuckDB does not scan as one column; 71,000 vectors of 256 floats
+load in 0.91 s instead of 20.9 s. A test builds the fixture index both ways
+and checks the stored rows are identical.
+
+A full index of `~/Public`, wall-clock per phase, before and after:
+
+| Phase | `executemany` | numpy columns |
+| --- | --- | --- |
+| extract (tree-sitter, Markdown) | 20.0 s | 17.3 s |
+| resolve + test edges | 1.8 s | 1.5 s |
+| write files, nodes, edges | 123.3 s | 0.8 s |
+| write docstrings | 3.7 s | 0.0 s |
+| centrality | 29.7 s | 0.9 s |
+| communities | 25.6 s | 0.5 s |
+| embeddings (embed + insert) | 34.3 s | 7.6 s |
+| git co-change | 3.6 s | 1.9 s |
+| __total__ | __242.9 s__ | __31.2 s__ |
+| throughput | 16 files/s, 1,857 rows/s | 128 files/s, 14,476 rows/s |
+| peak resident memory | 1,876 MB | 1,714 MB |
+
+The build is now dominated by extraction and the embedding model, both linear
+in the codebase, and peak memory went down rather than up, so one statement per
+table needs no chunking. At 128 files per second, a tree ten times the size of
+`~/Public` indexes in about five minutes; parallel extraction is the next lever.
 
 ## Graph traversal at scale: recursive SQL or DuckPGQ {#graph-traversal}
 

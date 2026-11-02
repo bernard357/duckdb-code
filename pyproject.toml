@@ -36,6 +36,8 @@ classifiers = [
 dependencies = [
     "duckdb>=1.1",
     "fastembed>=0.3",
+    # Bulk loading: the indexer writes each table as numpy columns.
+    "numpy>=2.0",
     "pydantic>=2.6",
     "typer>=0.12",
     "pyyaml>=6",

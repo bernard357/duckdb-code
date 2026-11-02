@@ -4,6 +4,8 @@ import datetime
 import shutil
 from pathlib import Path
 
+import pytest
+
 from duckdb_code.etag import compute_etag
 from duckdb_code.extractors.python import PythonExtractor
 from duckdb_code.indexer import _rebuild_file, index_folder
@@ -371,3 +373,142 @@ def test_full_and_incremental_reach_identical_state(tmp_path):
     assert _edge_set(inc_store) == _edge_set(full_store)
     inc_store.close()
     full_store.close()
+
+
+# Bulk loading (numpy-scanned columns) must store exactly what row-wise
+# `executemany` stores: same rows, same values, same types.
+
+_STAMP = datetime.datetime(2026, 11, 2, 20, 0, 0, 123456, tzinfo=datetime.UTC)
+
+_SHAPES = {
+    "files": (
+        ["path", "language", "etag", "stamped_at"],
+        [("a.py", "python", "e1", _STAMP), ("b.md", "markdown", "e2", _STAMP)],
+    ),
+    "commits": (
+        ["sha", "path", "committed_at", "summary", "ordinal"],
+        [
+            ("abc", "a.py", "2026-11-02T20:44:54+01:00", "one", 0),
+            ("def", "b.py", None, "two", 1),
+        ],
+    ),
+    "edges": (
+        ["src_id", "dst_id", "kind", "path", "resolution", "confidence"],
+        [("a", "b", "calls", "m.py", "exact", 1.0), ("a", "c", "calls", "", "x", 0.55)],
+    ),
+    "vectors": (
+        ["node_id", "embedding"],
+        [("n1", [0.25, 0.5, 1.0]), ("n2", [1.0, 0.0, -0.5])],
+    ),
+    "repositories": (
+        ["path", "branch", "head_commit"],
+        [("", "main", "abc"), ("x", None, None)],
+    ),
+}
+
+
+def _schema_connection():
+    import duckdb
+
+    from duckdb_code.store import SCHEMA_DDL
+
+    con = duckdb.connect(":memory:")
+    for ddl in SCHEMA_DDL:
+        con.execute(ddl)
+    return con
+
+
+def _row_wise_insert(con, table, columns, rows):
+    """The reference: what `executemany` stores for the same rows."""
+    if rows:
+        marks = ", ".join("?" for _ in columns)
+        con.executemany(
+            f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({marks})", rows
+        )
+
+
+def _row_wise_update(con, table, key, column, pairs):
+    if pairs:
+        con.executemany(
+            f"UPDATE {table} SET {column} = ? WHERE {key} = ?",
+            [(value, key_value) for key_value, value in pairs],
+        )
+
+
+@pytest.mark.parametrize("table", sorted(_SHAPES))
+def test_bulk_insert_stores_what_executemany_stores(table):
+    from duckdb_code.indexer import _bulk_insert
+
+    columns, rows = _SHAPES[table]
+    reference, bulk = _schema_connection(), _schema_connection()
+    _row_wise_insert(reference, table, columns, rows)
+    _bulk_insert(bulk, table, columns, rows)
+    query = f"SELECT * FROM {table} ORDER BY ALL"
+    assert bulk.execute(query).fetchall() == reference.execute(query).fetchall()
+    describe = f"DESCRIBE {table}"
+    assert bulk.execute(describe).fetchall() == reference.execute(describe).fetchall()
+
+
+def test_bulk_insert_accepts_no_rows():
+    from duckdb_code.indexer import _bulk_insert
+
+    con = _schema_connection()
+    _bulk_insert(con, "edges", ["src_id", "dst_id"], [])
+    assert con.execute("SELECT count(*) FROM edges").fetchone() == (0,)
+
+
+def test_bulk_update_sets_each_keyed_value():
+    from duckdb_code.indexer import _bulk_insert, _bulk_update
+
+    con = _schema_connection()
+    columns, rows = _SHAPES["files"]
+    _bulk_insert(con, "files", columns, rows)
+    _bulk_update(con, "files", "path", "churn", [("a.py", 3), ("b.md", 7)])
+    _bulk_update(con, "files", "path", "churn", [])
+    assert con.execute("SELECT path, churn FROM files ORDER BY path").fetchall() == [
+        ("a.py", 3),
+        ("b.md", 7),
+    ]
+
+
+def _graph_rows(db_path: str) -> dict[str, list]:
+    import duckdb
+
+    con = duckdb.connect(db_path, read_only=True)
+    try:
+        # `files.stamped_at` is the build time, which differs between builds.
+        selects = {
+            "nodes": "SELECT * FROM nodes",
+            "edges": "SELECT * FROM edges",
+            "files": "SELECT * EXCLUDE (stamped_at) FROM files",
+            "vectors": "SELECT * FROM vectors",
+            "commits": "SELECT * FROM commits",
+            "docstrings": "SELECT * FROM docstrings",
+        }
+        return {
+            table: con.execute(f"{select} ORDER BY ALL").fetchall()
+            for table, select in selects.items()
+        }
+    finally:
+        con.close()
+
+
+def test_bulk_loaded_index_matches_a_row_wise_build(tmp_path, monkeypatch):
+    import duckdb_code.indexer as indexer
+
+    bulk_db = str(tmp_path / "bulk.duckdb")
+    store = CodeStore(db_path=bulk_db, root=str(FIXTURE), embedder="hashing")
+    index_folder(store, FIXTURE)
+    store.close()
+
+    monkeypatch.setattr(indexer, "_bulk_insert", _row_wise_insert)
+    monkeypatch.setattr(indexer, "_bulk_update", _row_wise_update)
+    reference_db = str(tmp_path / "reference.duckdb")
+    store = CodeStore(db_path=reference_db, root=str(FIXTURE), embedder="hashing")
+    index_folder(store, FIXTURE)
+    store.close()
+
+    bulk, reference = _graph_rows(bulk_db), _graph_rows(reference_db)
+    for table in reference:
+        assert bulk[table] == reference[table], table
+    assert reference["nodes"] and reference["edges"] and reference["vectors"]

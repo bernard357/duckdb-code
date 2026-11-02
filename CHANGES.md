@@ -6,6 +6,15 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
 
 ## Unreleased
 
+### Changed
+
+- __Indexing is about eight times faster.__ Every bulk write is loaded as numpy
+  columns in one statement instead of row by row through `executemany`, and
+  the per-row centrality and churn updates became one `UPDATE … FROM`. A full
+  index of `~/Public` (3,976 files, 71,496 nodes, 307,487 edges) drops from
+  243 s to 31 s, peak memory from 1,876 MB to 1,714 MB, and the stored rows are
+  identical. `numpy` becomes a declared dependency (#42).
+
 ## v261102
 
 A precision and multi-repo release: the graph stops treating name guesses as

@@ -20,6 +20,8 @@ import subprocess
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
+import duckdb
+import numpy as np
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
@@ -927,13 +929,120 @@ def _dedup_nodes(nodes: list[Node]) -> list[Node]:
     return unique
 
 
+# Column order of the bulk-loaded graph tables, shared by the full write and
+# the file-keyed rebuild so the two can never drift apart.
+_NODE_COLUMNS = [
+    "node_id",
+    "kind",
+    "name",
+    "qualified_name",
+    "path",
+    "start_line",
+    "end_line",
+    "language",
+]
+_EDGE_COLUMNS = ["src_id", "dst_id", "kind", "path", "resolution", "confidence"]
+
+
+def _node_rows(nodes: list[Node]) -> list[tuple]:
+    return [
+        (
+            n.node_id,
+            n.kind,
+            n.name,
+            n.qualified_name,
+            n.path,
+            n.start_line,
+            n.end_line,
+            n.language,
+        )
+        for n in nodes
+    ]
+
+
+def _edge_rows(edges: list[Edge]) -> list[tuple]:
+    return [
+        (e.src_id, e.dst_id, e.kind, e.path, e.resolution, e.confidence) for e in edges
+    ]
+
+
+def _column(values: list) -> np.ndarray:
+    """One numpy column DuckDB scans into the target column's type.
+
+    Floats and integers get a typed array; anything else (strings, NULLs,
+    datetimes, lists) an object array. A list-valued column is filled element
+    by element, because ``np.array`` would turn equal-length lists into a 2-D
+    array, which DuckDB does not scan as one column.
+    """
+    if values and all(type(v) is float for v in values):
+        return np.array(values, dtype=np.float64)
+    if values and all(type(v) is int for v in values):
+        return np.array(values, dtype=np.int64)
+    if any(isinstance(v, list | tuple) for v in values):
+        column = np.empty(len(values), dtype=object)
+        for index, value in enumerate(values):
+            column[index] = value
+        return column
+    return np.array(values, dtype=object)
+
+
+def _bulk_insert(
+    con: duckdb.DuckDBPyConnection,
+    table: str,
+    columns: list[str],
+    rows: list[tuple],
+) -> None:
+    """Insert ``rows`` into ``table`` in one statement, as numpy columns.
+
+    DuckDB scans the registered dict of arrays column by column, which is two
+    orders of magnitude faster than ``executemany``'s row-by-row binding (0.23
+    s against 74 s for 234,000 edge rows) and stores the same values and
+    types. No rows is a no-op.
+    """
+    if not rows:
+        return
+    frame = {name: _column([row[i] for row in rows]) for i, name in enumerate(columns)}
+    relation = f"_bulk_{table}"
+    con.register(relation, frame)
+    try:
+        names = ", ".join(columns)
+        con.execute(f"INSERT INTO {table} ({names}) SELECT {names} FROM {relation}")
+    finally:
+        con.unregister(relation)
+
+
+def _bulk_update(
+    con: duckdb.DuckDBPyConnection,
+    table: str,
+    key: str,
+    column: str,
+    pairs: list[tuple],
+) -> None:
+    """Set ``column`` from ``(key value, value)`` pairs in one ``UPDATE``."""
+    if not pairs:
+        return
+    relation = f"_bulk_{table}_{column}"
+    con.register(
+        relation,
+        {
+            "key": _column([p[0] for p in pairs]),
+            "value": _column([p[1] for p in pairs]),
+        },
+    )
+    try:
+        con.execute(
+            f"UPDATE {table} SET {column} = {relation}.value FROM {relation} "
+            f"WHERE {table}.{key} = {relation}.key"
+        )
+    finally:
+        con.unregister(relation)
+
+
 def _write_docstrings(store: CodeStore, docstrings: dict[str, str]) -> None:
     """Store the docstrings in their side table, read only to embed symbols."""
-    if docstrings:
-        store._con.executemany(
-            "INSERT INTO docstrings (node_id, text) VALUES (?, ?)",
-            sorted(docstrings.items()),
-        )
+    _bulk_insert(
+        store._con, "docstrings", ["node_id", "text"], sorted(docstrings.items())
+    )
 
 
 def _discover_repositories(
@@ -1348,9 +1457,12 @@ def _compute_centrality(store: CodeStore) -> None:
             for dst in dsts:
                 nxt[dst] += share
         rank = nxt
-    store._con.executemany(
-        "UPDATE nodes SET centrality = ? WHERE node_id = ?",
-        [(rank[nid], nid) for nid in node_ids],
+    _bulk_update(
+        store._con,
+        "nodes",
+        "node_id",
+        "centrality",
+        [(nid, float(rank[nid])) for nid in node_ids],
     )
 
 
@@ -1387,10 +1499,14 @@ def _compute_communities(store: CodeStore) -> None:
             union(src, dst)
 
     con = store._con
-    con.executemany(
-        "INSERT INTO edges (src_id, dst_id, kind, path, resolution, confidence) "
-        "VALUES (?, ?, 'member_of', '', 'exact', ?)",
-        [(nid, find(nid), CONFIDENCE_EXACT) for nid in node_ids],
+    _bulk_insert(
+        con,
+        "edges",
+        _EDGE_COLUMNS,
+        [
+            (nid, find(nid), "member_of", "", "exact", CONFIDENCE_EXACT)
+            for nid in node_ids
+        ],
     )
 
 
@@ -1471,8 +1587,10 @@ def _compute_embeddings(store: CodeStore) -> None:
     except Exception as exc:  # noqa: BLE001 — degrade, never fail the index
         logger.warning("skipping embeddings (%s): %s", store.settings.embedder, exc)
         return
-    con.executemany(
-        "INSERT INTO vectors (node_id, embedding) VALUES (?, ?)",
+    _bulk_insert(
+        con,
+        "vectors",
+        ["node_id", "embedding"],
         [(row[0], vector) for row, vector in zip(rows, vectors, strict=True)],
     )
     con.execute(
@@ -1562,18 +1680,14 @@ def _compute_co_change(store: CodeStore) -> None:
             for b in ordered[i + 1 :]:
                 pair_counts[(a, b)] = pair_counts.get((a, b), 0) + 1
 
-    if commit_rows:
-        con.executemany(
-            "INSERT INTO commits (sha, path, committed_at, summary, ordinal) "
-            "VALUES (?, ?, ?, ?, ?)",
-            commit_rows,
-        )
+    _bulk_insert(
+        con,
+        "commits",
+        ["sha", "path", "committed_at", "summary", "ordinal"],
+        commit_rows,
+    )
 
-    if churn:
-        con.executemany(
-            "UPDATE files SET churn = ? WHERE path = ?",
-            [(count, path) for path, count in churn.items()],
-        )
+    _bulk_update(con, "files", "path", "churn", list(churn.items()))
 
     pairs = {p: c for p, c in pair_counts.items() if c >= _CO_CHANGE_MIN_PAIRS}
     if not pairs:
@@ -1581,11 +1695,19 @@ def _compute_co_change(store: CodeStore) -> None:
     strongest = max(pairs.values())
     # One undirected edge per pair, stored once (a -> b); confidence carries the
     # normalized coupling strength so a consumer can rank partners.
-    con.executemany(
-        "INSERT INTO edges (src_id, dst_id, kind, path, resolution, confidence) "
-        "VALUES (?, ?, 'file_changes_with', '', 'best_effort', ?)",
+    _bulk_insert(
+        con,
+        "edges",
+        _EDGE_COLUMNS,
         [
-            (file_nodes[a], file_nodes[b], count / strongest)
+            (
+                file_nodes[a],
+                file_nodes[b],
+                "file_changes_with",
+                "",
+                "best_effort",
+                count / strongest,
+            )
             for (a, b), count in pairs.items()
         ],
     )
@@ -1705,47 +1827,17 @@ def _write(
     rebuild it. Keep it, it is not dead.
     """
     con = store._con
-    # Bulk-insert with executemany rather than a per-row execute loop: at scale
-    # (tens of thousands of nodes, hundreds of thousands of edges) one round-trip
-    # per row is the dominant cost and does not finish in reasonable time.
-    # DuckDB's executemany rejects an empty parameter list, so each insert is
-    # guarded for the empty-index case.
-    if file_rows:
-        con.executemany(
-            "INSERT INTO files (path, language, etag, stamped_at) VALUES (?, ?, ?, ?)",
-            [(p, lang, etag, build_stamp) for p, lang, etag in file_rows],
-        )
-    if nodes:
-        con.executemany(
-            """
-            INSERT INTO nodes
-                (node_id, kind, name, qualified_name, path,
-                 start_line, end_line, language)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    node.node_id,
-                    node.kind,
-                    node.name,
-                    node.qualified_name,
-                    node.path,
-                    node.start_line,
-                    node.end_line,
-                    node.language,
-                )
-                for node in nodes
-            ],
-        )
-    if edges:
-        con.executemany(
-            "INSERT INTO edges (src_id, dst_id, kind, path, resolution, confidence) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            [
-                (e.src_id, e.dst_id, e.kind, e.path, e.resolution, e.confidence)
-                for e in edges
-            ],
-        )
+    # Each table is loaded in one statement from numpy columns (see
+    # :func:`_bulk_insert`): row-by-row ``executemany`` binding was three
+    # quarters of a full build at tens of thousands of nodes.
+    _bulk_insert(
+        con,
+        "files",
+        ["path", "language", "etag", "stamped_at"],
+        [(p, lang, etag, build_stamp) for p, lang, etag in file_rows],
+    )
+    _bulk_insert(con, "nodes", _NODE_COLUMNS, _node_rows(nodes))
+    _bulk_insert(con, "edges", _EDGE_COLUMNS, _edge_rows(edges))
     con.execute(
         "INSERT INTO meta (key, value) VALUES (?, ?)",
         ["schema_version", str(SCHEMA_VERSION)],
@@ -1842,39 +1934,11 @@ def _rebuild_file(
     con.execute("DELETE FROM edges WHERE path = ?", [path])
     con.execute("DELETE FROM nodes WHERE path = ?", [path])
     con.execute("DELETE FROM files WHERE path = ?", [path])
-    con.execute(
-        "INSERT INTO files (path, language, etag, stamped_at) VALUES (?, ?, ?, ?)",
-        [path, language, etag, stamp],
+    _bulk_insert(
+        con,
+        "files",
+        ["path", "language", "etag", "stamped_at"],
+        [(path, language, etag, stamp)],
     )
-    for node in extraction.nodes:
-        con.execute(
-            """
-            INSERT INTO nodes
-                (node_id, kind, name, qualified_name, path,
-                 start_line, end_line, language)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                node.node_id,
-                node.kind,
-                node.name,
-                node.qualified_name,
-                node.path,
-                node.start_line,
-                node.end_line,
-                node.language,
-            ],
-        )
-    for edge in extraction.edges:
-        con.execute(
-            "INSERT INTO edges (src_id, dst_id, kind, path, resolution, confidence) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            [
-                edge.src_id,
-                edge.dst_id,
-                edge.kind,
-                edge.path,
-                edge.resolution,
-                edge.confidence,
-            ],
-        )
+    _bulk_insert(con, "nodes", _NODE_COLUMNS, _node_rows(extraction.nodes))
+    _bulk_insert(con, "edges", _EDGE_COLUMNS, _edge_rows(extraction.edges))
