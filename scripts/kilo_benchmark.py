@@ -55,7 +55,7 @@ DEFAULT_RUN_LOG = (
 )
 DEFAULT_MODEL = "amazon-bedrock/global.anthropic.claude-opus-4-6-v1"
 DEFAULT_AGENT = "ask"
-DUCKDB_CODE_SPEC = "duckdb-code==261102.221350"
+DUCKDB_CODE_SPEC = "duckdb-code==261103"
 ARMS = ("A", "B")
 DUCKDB_CODE_PREFIX = "duckdb-code_"
 KILO_DATA_DIR = (
