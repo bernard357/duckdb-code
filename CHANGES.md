@@ -6,6 +6,22 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
 
 ## Unreleased
 
+## v261103
+
+A scale and accuracy release: indexing goes parallel and its whole-graph passes
+twice as fast, so a 46,222-file workspace indexes in about two minutes instead of
+five and a half, with the same graph, and `history` reports real co-change counts,
+Markdown included. Rebuild existing indexes with
+`duckdb-code index <folder> --rebuild`.
+
+### Added
+
+- __Kilo Code benchmark results.__ The full matrix on 261102.221350 (66
+  sessions) shows `duckdb-code` cutting median context by 52% and latency by
+  40% on structural questions, with every arm B answer correct; the per-run
+  metrics are in `fixtures/benchmarks/kilo-results-261102.csv` and the
+  analysis in the performance workbook (#37).
+
 ### Changed
 
 - __Files are extracted in parallel.__ From 500 files on, the indexer parses
