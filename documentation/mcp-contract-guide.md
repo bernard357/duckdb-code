@@ -133,6 +133,13 @@ Git signals: recent commits touching the symbol, co-change partners (files that
 usually change with it), and churn. Returns
 `{symbol, commits: […], co_change: [{path, together_count}], churn}`.
 
+`together_count` is the number of mined commits that touched both files, and
+`churn` the number that touched the file: both are counts from git, within the
+last 500 commits of the file's repository, leaving out sweeping commits that
+touched more than 50 indexed files. Partners are ranked by coupling normalized
+within their repository. Markdown pages take part like code files, so a
+changelog or a guide that moves with the code shows up as a partner.
+
 ### `analytics(kind)`
 
 Whole-repo structural views for planning and review: dependency `cycles`,

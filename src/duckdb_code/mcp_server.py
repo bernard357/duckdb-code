@@ -280,8 +280,14 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         - commits: recent commits touching that file, newest first, each
           {sha, committed_at, summary}.
         - co_change: the files that usually change with it, most-coupled first,
-          each {path, together_count}.
+          each {path, together_count}, where together_count is the number of
+          recent commits that touched both files. Code files and Markdown pages
+          both count.
         - churn: how many recent commits touched the file.
+
+        "Recent" is the last 500 commits of the file's git repository; a commit
+        that touched more than 50 indexed files (a rename, a reformat) is left
+        out of all three signals.
 
         Returns empty signals when the target matches nothing or the index
         carries no git history (built outside a repo or without git).

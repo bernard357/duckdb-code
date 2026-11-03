@@ -144,6 +144,38 @@ cases:
           - src/duckdb_code/mcp_server.py
           - src/duckdb_code/cli.py
         within: 8
+      # Commits shared with store.py, grounded with `git log` at the
+      # pinned commit (15 commits touch store.py).
+      - type: contains_all
+        field: co_change
+        key: together_count
+        where:
+          path: duckdb-code/CHANGES.md
+        values: ["15"]
+      - type: contains_all
+        field: co_change
+        key: together_count
+        where:
+          path: duckdb-code/src/duckdb_code/models.py
+        values: ["11"]
+      - type: contains_all
+        field: co_change
+        key: together_count
+        where:
+          path: duckdb-code/src/duckdb_code/mcp_server.py
+        values: ["10"]
+      - type: contains_all
+        field: co_change
+        key: together_count
+        where:
+          path: duckdb-code/src/duckdb_code/cli.py
+        values: ["10"]
+      - type: contains_all
+        field: co_change
+        key: together_count
+        where:
+          path: duckdb-code/tests/test_mcp_server.py
+        values: ["10"]
 
   - id: q07
     question: Which duckdb-vectors pages link to the performance guide?

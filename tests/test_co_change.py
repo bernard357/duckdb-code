@@ -169,3 +169,94 @@ def test_co_change_uses_meta_root_not_just_settings(tmp_path):
     assert con.execute("SELECT COUNT(*) FROM commits").fetchone()[0] > 0
     assert con.execute("SELECT MAX(churn) FROM files").fetchone()[0] == 2
     store.close()
+
+
+def _commit(repo, files, message):
+    """Rewrite each file with a fresh body, then commit them together."""
+    for name in files:
+        path = repo / name
+        body = path.read_text(encoding="utf-8") if path.exists() else ""
+        path.write_text(f"{body}# {message}\n", encoding="utf-8")
+    _git(["add", *files], repo)
+    _git(["commit", "-q", "-m", message], repo)
+
+
+def _workspace(tmp_path):
+    """Repo `alpha`: a.py with b.py twice, with c.py once, alone once.
+
+    Repo `beta` holds a stronger pair (x.py with y.py three times), which
+    used to scale alpha's counts because coupling was normalized across the
+    whole index.
+    """
+    root = tmp_path / "ws"
+    alpha = root / "alpha"
+    beta = root / "beta"
+    for repo in (alpha, beta):
+        repo.mkdir(parents=True)
+        _git(["init", "-q"], repo)
+    _commit(alpha, ["a.py", "b.py"], "ab one")
+    _commit(alpha, ["a.py", "b.py"], "ab two")
+    _commit(alpha, ["a.py", "c.py"], "ac")
+    _commit(alpha, ["a.py"], "a alone")
+    for n in range(3):
+        _commit(beta, ["x.py", "y.py"], f"xy {n}")
+    store = CodeStore(db_path=str(tmp_path / "ws.duckdb"), root=str(root))
+    index_folder(store, root)
+    return store
+
+
+def test_history_reports_the_real_number_of_shared_commits(tmp_path):
+    store = _workspace(tmp_path)
+    try:
+        result = store.history("alpha/a.py")
+        beta = store.history("beta/x.py")
+    finally:
+        store.close()
+    assert result.churn == 4
+    # b.py shares 2 of a.py's 4 commits; c.py only 1, under the 2-commit floor.
+    # The old proxy, round(2 / 3 * 4), would have said 3.
+    assert [(p.path, p.together_count) for p in result.co_change] == [("alpha/b.py", 2)]
+    assert [(p.path, p.together_count) for p in beta.co_change] == [("beta/y.py", 3)]
+
+
+def test_coupling_is_normalized_per_repository(tmp_path):
+    store = _workspace(tmp_path)
+    try:
+        rows = store._con.execute(
+            """
+            SELECT s.path, d.path, e.confidence
+            FROM edges e
+            JOIN nodes s ON s.node_id = e.src_id
+            JOIN nodes d ON d.node_id = e.dst_id
+            WHERE e.kind = 'file_changes_with'
+            ORDER BY s.path
+            """
+        ).fetchall()
+    finally:
+        store.close()
+    # Each repository's strongest pair is 1.0, whatever the other repository
+    # holds (alpha's pair used to read 2/3 next to beta's).
+    assert rows == [("alpha/a.py", "alpha/b.py", 1.0), ("beta/x.py", "beta/y.py", 1.0)]
+
+
+def test_markdown_pages_take_part_in_co_change(tmp_path):
+    # A Markdown file has a `page` node, not a `file` node; it must still get
+    # commits, churn, and co-change partners, in both directions.
+    repo = tmp_path / "docs"
+    repo.mkdir()
+    _git(["init", "-q"], repo)
+    _commit(repo, ["store.py", "CHANGES.md"], "one")
+    _commit(repo, ["store.py", "CHANGES.md"], "two")
+    _commit(repo, ["store.py"], "three")
+    store = CodeStore(db_path=str(tmp_path / "docs.duckdb"), root=str(repo))
+    index_folder(store, repo)
+    try:
+        code = store.history("store.py")
+        page = store.history("CHANGES.md")
+    finally:
+        store.close()
+    assert [(p.path, p.together_count) for p in code.co_change] == [("CHANGES.md", 2)]
+    assert page.path == "CHANGES.md"
+    assert page.churn == 2
+    assert [c.summary for c in page.commits] == ["two", "one"]
+    assert [(p.path, p.together_count) for p in page.co_change] == [("store.py", 2)]

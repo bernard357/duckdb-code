@@ -6,6 +6,19 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
 
 ## Unreleased
 
+### Fixed
+
+- __`history` reports real co-change counts, Markdown included.__
+  `together_count` was a scaled guess, the pair's coupling normalized by the
+  strongest pair in the whole index times the file's churn, so on `~/Public`
+  it said `models.py` changed with `store.py` in 19 of 19 commits where git
+  says 14. It is now the number of mined commits the two files share, and
+  coupling is normalized within each repository. Markdown files, which have a
+  `page` node and no `file` node, were left out of commits, churn, and
+  co-change altogether; they now take part, so `CHANGES.md` shows up as a
+  partner and `history` on a `.md` file returns its commits. Rebuild existing
+  indexes with `duckdb-code index <folder> --rebuild` (#44).
+
 ## v261102.221350
 
 A performance release: every table of the index is bulk-loaded as numpy

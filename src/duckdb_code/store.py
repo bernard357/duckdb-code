@@ -1026,8 +1026,14 @@ class CodeStore:
 
         # Co-change partners: the OTHER endpoint of a file_changes_with edge on
         # this file's node, either direction, ranked by the normalized
-        # co-occurrence confidence.
-        file_node_id = f"file:{path}@{path}:1"
+        # co-occurrence confidence. The file's node is its `file` node, or the
+        # `page` node of a Markdown file, which has no `file` node.
+        node_row = self._con.execute(
+            "SELECT node_id FROM nodes WHERE path = ? AND kind IN ('file', 'page') "
+            "ORDER BY kind = 'page' LIMIT 1",
+            [path],
+        ).fetchone()
+        file_node_id = node_row[0] if node_row else f"file:{path}@{path}:1"
         partner_rows = self._con.execute(
             """
             SELECT n.path, e.confidence
@@ -1038,19 +1044,28 @@ class CodeStore:
             """,
             [file_node_id, file_node_id, file_node_id],
         ).fetchall()
+        # The number of mined commits that touched both files, counted from the
+        # `commits` table the coupling edges were derived from (same window,
+        # same sweeping-commit filter), so it is a count, not a scaled guess.
+        shared = dict(
+            self._con.execute(
+                """
+                SELECT p.path, COUNT(DISTINCT p.sha)
+                FROM commits t JOIN commits p ON p.sha = t.sha AND p.path <> t.path
+                WHERE t.path = ?
+                GROUP BY p.path
+                """,
+                [path],
+            ).fetchall()
+        )
+        co_change = [
+            CoChangePartner(path=row[0], together_count=shared.get(row[0], 0))
+            for row in partner_rows
+        ]
         churn_row = self._con.execute(
             "SELECT churn FROM files WHERE path = ?", [path]
         ).fetchone()
         churn = churn_row[0] if churn_row else 0
-        # The raw together_count is not stored; surface the normalized coupling
-        # strength scaled to the file's churn as a best-effort count proxy.
-        co_change = [
-            CoChangePartner(
-                path=row[0],
-                together_count=max(1, round(row[1] * churn)) if churn else 1,
-            )
-            for row in partner_rows
-        ]
 
         return HistoryResult(
             symbol=target,

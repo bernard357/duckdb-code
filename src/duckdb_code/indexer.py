@@ -1616,6 +1616,16 @@ _CO_CHANGE_MAX_FILES_PER_COMMIT = 50
 _CO_CHANGE_MIN_PAIRS = 2
 
 
+# The node that stands for each indexed file in git signals: the `file` node of
+# a code file, or the `page` node of a Markdown file, which has no `file` node.
+_FILE_NODE_SQL = (
+    "SELECT path, node_id FROM nodes WHERE kind = 'file' "
+    "UNION ALL "
+    "SELECT p.path, p.node_id FROM nodes p WHERE p.kind = 'page' AND NOT EXISTS "
+    "(SELECT 1 FROM nodes f WHERE f.kind = 'file' AND f.path = p.path)"
+)
+
+
 def _compute_co_change(store: CodeStore) -> None:
     """Derive git co-change edges and per-file churn from recent history.
 
@@ -1634,9 +1644,7 @@ def _compute_co_change(store: CodeStore) -> None:
     """
     con = store._con
     # Map stored (folder-relative) path -> its file node id, for indexed files.
-    file_nodes = dict(
-        con.execute("SELECT path, node_id FROM nodes WHERE kind = 'file'").fetchall()
-    )
+    file_nodes = dict(con.execute(_FILE_NODE_SQL).fetchall())
     if not file_nodes:
         return
     # The indexed folder: the authoritative ``meta.root`` the write path
@@ -1654,17 +1662,20 @@ def _compute_co_change(store: CodeStore) -> None:
         for row in con.execute("SELECT path FROM repositories ORDER BY path").fetchall()
     ]
     commits: list[_CommitRecord] = []
+    repository_of: list[str] = []
     for repo in repositories:
         for commit in _git_log_commits(Path(root) / repo if repo else Path(root)):
             if repo:
                 commit.files = [f"{repo}/{f}" for f in commit.files]
             commits.append(commit)
+            repository_of.append(repo)
     if not commits:
         return
 
     indexed = set(file_nodes)
     churn: dict[str, int] = {}
     pair_counts: dict[tuple[str, str], int] = {}
+    pair_repository: dict[tuple[str, str], str] = {}
     commit_rows: list[tuple[str, str, str | None, str, int]] = []
     for ordinal, commit in enumerate(commits):
         touched = [f for f in commit.files if f in indexed]
@@ -1679,6 +1690,7 @@ def _compute_co_change(store: CodeStore) -> None:
         for i, a in enumerate(ordered):
             for b in ordered[i + 1 :]:
                 pair_counts[(a, b)] = pair_counts.get((a, b), 0) + 1
+                pair_repository[(a, b)] = repository_of[ordinal]
 
     _bulk_insert(
         con,
@@ -1692,7 +1704,12 @@ def _compute_co_change(store: CodeStore) -> None:
     pairs = {p: c for p, c in pair_counts.items() if c >= _CO_CHANGE_MIN_PAIRS}
     if not pairs:
         return
-    strongest = max(pairs.values())
+    # Coupling is normalized by the strongest pair of the same repository, so
+    # one busy repository does not scale down the coupling of every other.
+    strongest_in: dict[str, int] = {}
+    for pair, count in pairs.items():
+        repo = pair_repository[pair]
+        strongest_in[repo] = max(strongest_in.get(repo, 0), count)
     # One undirected edge per pair, stored once (a -> b); confidence carries the
     # normalized coupling strength so a consumer can rank partners.
     _bulk_insert(
@@ -1706,7 +1723,7 @@ def _compute_co_change(store: CodeStore) -> None:
                 "file_changes_with",
                 "",
                 "best_effort",
-                count / strongest,
+                count / strongest_in[pair_repository[(a, b)]],
             )
             for (a, b), count in pairs.items()
         ],
