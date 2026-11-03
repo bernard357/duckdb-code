@@ -468,12 +468,13 @@ def test_unique_suffix_bind_is_stronger_than_an_ambiguous_one():
     walk = next(n for n in nodes if n.qualified_name == "m.Walker.walk")
     edges = [
         _unresolved(walk.node_id, "run", "calls", "m.py"),
-        _unresolved(walk.node_id, "visit", "calls", "m.py"),
+        _unresolved(walk.node_id, "attr::visit", "calls", "m.py"),
     ]
     calls = _edges_of_kind(resolve_edges(nodes, edges), "calls")
     confidence_of = {e.dst_id: e.confidence for e in calls}
     assert confidence_of["function:m.Base.run@m.py:3"] == 0.75
-    # `visit` names two methods: both binds stay at the suffix level.
+    # `x.visit` on an untyped receiver names two methods: both binds stay
+    # at the suffix level.
     assert confidence_of["function:m.Walker.visit@m.py:8"] == 0.55
     assert confidence_of["function:n.Other.visit@n.py:3"] == 0.55
 
@@ -590,4 +591,121 @@ def test_bound_import_lets_a_bare_call_bind_through_the_local_name():
     calls = _edges_of_kind(resolve_edges(nodes, [edge, call], repos), "calls")
     assert [(e.dst_id, e.confidence) for e in calls] == [
         ("class:b.lib.config.Settings@b/lib/config.py:2", 0.90)
+    ]
+
+
+def _typed_world():
+    """CodeStore(Base) in pkg.store, Base.report in pkg.base, a caller in app."""
+    nodes = [
+        _node("module", "pkg.base", "pkg/base.py"),
+        _node("class", "pkg.base.Base", "pkg/base.py", 2),
+        _node("function", "pkg.base.Base.report", "pkg/base.py", 3),
+        _node("module", "pkg.store", "pkg/store.py"),
+        _node("class", "pkg.store.CodeStore", "pkg/store.py", 2),
+        _node("function", "pkg.store.CodeStore.close", "pkg/store.py", 3),
+        _node("module", "pkg.util", "pkg/util.py"),
+        _node("function", "pkg.util.helper", "pkg/util.py", 2),
+        _node("function", "pkg.util.loads", "pkg/util.py", 4),
+        _node("module", "pkg.a", "pkg/a.py"),
+        _node("function", "pkg.a.dumps", "pkg/a.py", 2),
+        _node("function", "pkg.a.visit", "pkg/a.py", 3),
+        _node("module", "pkg.b", "pkg/b.py"),
+        _node("function", "pkg.b.dumps", "pkg/b.py", 2),
+        _node("function", "pkg.b.visit", "pkg/b.py", 3),
+        _node("module", "app", "app.py"),
+        _node("function", "app.run", "app.py", 5),
+    ]
+    store_import = _node("import", "pkg.store::import:pkg.base.Base", "pkg/store.py")
+    app_store = _node("import", "app::import:pkg.store.CodeStore", "app.py")
+    app_util = _node("import", "app::import:pkg.util", "app.py")
+    nodes += [store_import, app_store, app_util]
+    edges = [
+        _unresolved(store_import.node_id, "pkg.base.Base", "imports", "pkg/store.py"),
+        _unresolved(app_store.node_id, "pkg.store.CodeStore", "imports", "app.py"),
+        _unresolved(app_util.node_id, "pkg.util", "imports", "app.py"),
+        _unresolved(
+            "class:pkg.store.CodeStore@pkg/store.py:2",
+            "Base",
+            "inherits",
+            "pkg/store.py",
+        ),
+    ]
+    return nodes, edges
+
+
+def _calls_from_run(raws):
+    nodes, edges = _typed_world()
+    run = "function:app.run@app.py:5"
+    edges += [_unresolved(run, raw, "calls", "app.py") for raw in raws]
+    resolved = _edges_of_kind(resolve_edges(nodes, edges), "calls")
+    return sorted(
+        (e.dst_id.split("@")[0].split(":", 1)[1], e.confidence) for e in resolved
+    )
+
+
+def test_typed_call_binds_to_the_class_member():
+    assert _calls_from_run(["type::i::CodeStore::close"]) == [
+        ("pkg.store.CodeStore.close", 0.90)
+    ]
+
+
+def test_typed_call_binds_to_an_inherited_member_resolved_in_the_same_pass():
+    assert _calls_from_run(["type::i::CodeStore::report"]) == [
+        ("pkg.base.Base.report", 0.90)
+    ]
+
+
+def test_module_receiver_binds_through_the_import():
+    assert _calls_from_run(["type::i::util::helper"]) == [("pkg.util.helper", 0.95)]
+
+
+def test_external_import_receiver_keeps_only_a_unique_name():
+    # `json` is not in the index: two `dumps` are a guess, dropped; one
+    # `loads` stays as a unique-name bind.
+    assert _calls_from_run(["type::i::json::dumps"]) == []
+    assert _calls_from_run(["type::i::json::loads"]) == [("pkg.util.loads", 0.75)]
+
+
+def test_bare_name_with_several_candidates_is_not_guessed():
+    assert _calls_from_run(["visit"]) == []
+    assert _calls_from_run(["helper"]) == [("pkg.util.helper", 0.75)]
+
+
+def test_attribute_guess_still_binds_by_shared_name():
+    assert _calls_from_run(["attr::visit"]) == [
+        ("pkg.a.visit", 0.55),
+        ("pkg.b.visit", 0.55),
+    ]
+
+
+def test_attribute_guess_stays_in_the_callers_repository():
+    nodes = [
+        _node("module", "a.m", "a/m.py"),
+        _node("function", "a.m.caller", "a/m.py", 2),
+        _node("function", "a.m.Local.close", "a/m.py", 5),
+        _node("module", "b.n", "b/n.py"),
+        _node("function", "b.n.Other.close", "b/n.py", 3),
+        _node("function", "b.n.Third.close", "b/n.py", 6),
+    ]
+    edges = [
+        _unresolved("function:a.m.caller@a/m.py:2", "attr::close", "calls", "a/m.py")
+    ]
+    calls = _edges_of_kind(resolve_edges(nodes, edges, ["a", "b"]), "calls")
+    assert [(e.dst_id, e.confidence) for e in calls] == [
+        ("function:a.m.Local.close@a/m.py:5", 0.55)
+    ]
+
+
+def test_a_name_imported_twice_to_one_target_is_not_ambiguous():
+    # `from pkg.store import CodeStore` at the top and again in a function.
+    nodes, edges = _typed_world()
+    again = _node("import", "app::import:pkg.store.CodeStore", "app.py", 6)
+    nodes.append(again)
+    edges.append(_unresolved(again.node_id, "pkg.store.CodeStore", "imports", "app.py"))
+    edges.append(
+        _unresolved("function:app.run@app.py:5", "CodeStore", "calls", "app.py")
+    )
+    calls = _edges_of_kind(resolve_edges(nodes, edges), "calls")
+    assert [(e.dst_id, e.confidence) for e in calls] == [
+        ("class:pkg.store.CodeStore@pkg/store.py:2", 0.90)
     ]

@@ -146,16 +146,18 @@ def test_impact_suffix_seed_propagates_best_effort(tmp_path):
     store.close()
 
 
-def test_impact_attribute_tail_run_edges_are_best_effort(tmp_path):
+def test_impact_typed_receiver_call_binds_its_class_member(tmp_path):
     store = _indexed(tmp_path)
-    # billing.bill does `c.run(amount)` — an attribute-tail call whose tail
-    # `run` suffix-matches every `run` method in the index (Base.run,
-    # Charge.run, web Charge.run). Those edges must be best_effort, never exact
-    # (fix 5). So impacting a `run` method reaches billing.bill best_effort.
-    result = store.impact("payments.charge.Base.run")
+    # billing.bill does `c = Charge()` then `c.run(amount)`: the receiver's
+    # class is known, so the call binds Charge.run, not every `run` method.
+    result = store.impact("payments.charge.Charge.run", depth=1)
     affected = {item.node.qualified_name: item for item in result.affected}
-    assert "payments.billing.bill" in affected
-    assert affected["payments.billing.bill"].resolution == "best_effort"
+    assert affected["payments.billing.bill"].resolution == "exact"
+    premium = store.impact("payments.premium.Premium.run", depth=1)
+    assert premium.resolved
+    assert "payments.billing.bill" not in {
+        item.node.qualified_name for item in premium.affected
+    }
     store.close()
 
 

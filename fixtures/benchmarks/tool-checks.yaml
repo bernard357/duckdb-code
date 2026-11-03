@@ -253,6 +253,32 @@ cases:
           - duckdb_code.cli.mcp
           - duckdb_code.mcp_server.build_server.search
 
+  - id: typed
+    question: Which functions call CodeStore.close, and nothing else's close?
+    # `store = CodeStore(...)` then `store.close()` binds through the class
+    # (#46); before, the `close` tail guessed 20 same-named methods across the
+    # four repositories.
+    tool: impact
+    args:
+      target: duckdb_code.store.CodeStore.close
+      depth: 1
+    checks:
+      - type: contains_all
+        field: affected
+        key: node.qualified_name
+        values:
+          - duckdb_code.cli.impact
+          - duckdb_code.cli.index
+          - duckdb_code.mcp_server.build_server.search
+      - type: excludes_any
+        field: affected
+        key: node.path
+        match: prefix
+        values:
+          - duckdb-vectors/
+          - boringsteps/
+          - ileap-mcp/
+
   - id: size
     question: Is impact bounded on a high fan-in target?
     # The Markdown chunker closed the stdio transport before the #40 cap, at

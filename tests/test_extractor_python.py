@@ -75,9 +75,9 @@ def test_unresolved_import_and_call_and_inherit_targets():
 
 
 def test_attribute_tail_call_carries_tail():
-    # c.run(amount) in billing.bill is an attribute-tail call carrying "run".
+    # c.run(amount) in billing.bill: `c = Charge(...)` types the receiver.
     billing = _extract("payments/billing.py")
-    assert "run" in _raw_targets(billing, "calls")
+    assert "type::i::Charge::run" in _raw_targets(billing, "calls")
 
 
 _SCOPED_SOURCE = """\
@@ -129,13 +129,13 @@ def test_self_calls_carry_their_enclosing_class():
 def test_attribute_tail_is_kept_even_when_a_local_shares_its_name():
     extraction = PythonExtractor().extract(_SCOPED_SOURCE, "m.py")
     # self.helper.links() calls a `links` attribute, not the local `links`.
-    assert "links" in _raw_from(extraction, "walk", "calls")
+    assert "attr::links" in _raw_from(extraction, "walk", "calls")
 
 
 def test_module_level_function_has_no_self_receiver():
     source = "def run(self):\n    return self.go()\n"
     extraction = PythonExtractor().extract(source, "m.py")
-    assert _raw_from(extraction, "run", "calls") == ["go"]
+    assert _raw_from(extraction, "run", "calls") == ["attr::go"]
 
 
 def test_relative_imports_keep_their_level():
@@ -221,3 +221,58 @@ def test_docstrings_are_captured_collapsed_and_capped():
     assert docs["m.Store"] == "Keep items. Second paragraph wraps."
     assert len(docs["m.Store.get"]) == 300
     assert docs["m.Store.get"].startswith("word word")
+
+
+_TYPED_SOURCE = """\
+import json
+from pkg.store import CodeStore
+
+
+def run(path, typed: CodeStore, maybe: CodeStore | None = None):
+    store = CodeStore(path)
+    store.close()
+    typed.index(path)
+    maybe.report()
+    json.dumps(path)
+    CodeStore.default()
+    mixed = CodeStore(path)
+    mixed = make(path)
+    mixed.close()
+    self_like = path.parent
+    self_like.exists()
+    report(url=build(path), match="x")
+    return helper.cache_clear()
+"""
+
+
+def test_keyword_argument_names_are_not_references():
+    extraction = PythonExtractor().extract(_TYPED_SOURCE, "m.py")
+    references = _raw_from(extraction, "run", "references")
+    assert "url" not in references and "match" not in references
+    assert {"report", "build"} <= set(_raw_from(extraction, "run", "calls"))
+
+
+def test_typed_receivers_carry_their_type():
+    calls = set(
+        _raw_from(PythonExtractor().extract(_TYPED_SOURCE, "m.py"), "run", "calls")
+    )
+    # A local assigned only from CodeStore(...), and annotated parameters,
+    # name CodeStore, which the file imports (flag i).
+    assert "type::i::CodeStore::close" in calls
+    assert "type::i::CodeStore::index" in calls
+    assert "type::i::CodeStore::report" in calls
+    # An imported module and an imported class used directly.
+    assert "type::i::json::dumps" in calls
+    assert "type::i::CodeStore::default" in calls
+    # A module-level name the file does not import (flag n).
+    assert "type::n::helper::cache_clear" in calls
+
+
+def test_untrusted_receivers_stay_attribute_guesses():
+    calls = set(
+        _raw_from(PythonExtractor().extract(_TYPED_SOURCE, "m.py"), "run", "calls")
+    )
+    # `mixed` is assigned from CodeStore(...) and from make(...): not inferred.
+    assert "attr::close" in calls
+    # `self_like` is assigned from an attribute load, not a constructor.
+    assert "attr::exists" in calls

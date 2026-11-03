@@ -91,6 +91,42 @@ def _join_import(module_path: str, imported: str) -> str:
     return f"{module_path}.{imported}"
 
 
+# Raw-target marker for ``<receiver>.<member>`` when the receiver names a known
+# type or module: ``type::<flag>::<dotted name>::<member>``. The dotted name is
+# an imported or module-level name (``json``, ``CodeStore``, ``pkg.util``) or
+# the inferred class of a local (``store = CodeStore(...)``, ``s: CodeStore``);
+# the flag is ``i`` when its first segment is bound by an import in the file,
+# else ``n``. The resolver binds it through the module's names.
+TYPE_TARGET = "type::"
+# Raw-target marker for an attribute member on a receiver the extractor cannot
+# type (``self.x.y``, a call result, an untyped local): ``attr::<member>``,
+# resolved as a shared-name guess.
+ATTR_TARGET = "attr::"
+
+
+def type_target(flag: str, dotted: str, member: str) -> str:
+    """The raw target of ``<dotted>.<member>`` for a typed receiver."""
+    return f"{TYPE_TARGET}{flag}::{dotted}::{member}"
+
+
+def split_type_target(raw: str) -> tuple[str, str, str] | None:
+    """Return ``(flag, dotted, member)`` for a :func:`type_target` raw, else None."""
+    if not raw.startswith(TYPE_TARGET):
+        return None
+    parts = raw[len(TYPE_TARGET) :].split("::")
+    return (parts[0], parts[1], parts[2]) if len(parts) == 3 and all(parts) else None
+
+
+def attr_target(member: str) -> str:
+    """The raw target of an attribute member on an untyped receiver."""
+    return f"{ATTR_TARGET}{member}"
+
+
+def split_attr_target(raw: str) -> str | None:
+    """Return the member of an :func:`attr_target` raw, else None."""
+    return raw[len(ATTR_TARGET) :] if raw.startswith(ATTR_TARGET) else None
+
+
 # Statements that open a new scope: their bodies are not the function's locals.
 _SCOPE_TYPES = frozenset({"function_definition", "class_definition", "lambda"})
 # Tuple/list targets whose identifiers are all bound by the assignment.
@@ -141,6 +177,10 @@ class _PythonBuilder:
         # (receiver parameter, class qn) while walking a method body, so
         # ``self.name`` resolves within the enclosing class first.
         self._receiver: tuple[str, str] | None = None
+        # Names the file binds by import, and the current function's typed
+        # locals (name -> class), for typed receivers.
+        self._imported: set[str] = set()
+        self._local_types: dict[str, str] = {}
         # node_id -> docstring of each class and function that has one.
         self.docstrings: dict[str, str] = {}
 
@@ -220,6 +260,7 @@ class _PythonBuilder:
             "module", self.module_qn or self.path, self.module_qn, root
         )
         self._add_defines(file_id, self._module_id)
+        self._imported = self._import_bound_names(root)
         self._walk_body(root, scope_qn=self.module_qn, container_id=self._module_id)
 
     def _walk_body(self, node, scope_qn: str, container_id: str) -> None:
@@ -385,6 +426,10 @@ class _PythonBuilder:
             # Names assigned anywhere in the body are locals, bound like params.
             bound = params | self._local_names(body)
             outer, self._receiver = self._receiver, receiver
+            outer_types, self._local_types = (
+                self._local_types,
+                self._local_types_of(node, body),
+            )
             try:
                 # Nested defs append the defining function name to the scope.
                 self._walk_function_body(
@@ -392,6 +437,7 @@ class _PythonBuilder:
                 )
             finally:
                 self._receiver = outer
+                self._local_types = outer_types
         return func_id
 
     def _walk_function_body(
@@ -503,6 +549,12 @@ class _PythonBuilder:
             if name not in bound:
                 self._add_unresolved(src_id, name, "references")
             return
+        if kind == "keyword_argument":
+            # `f(url=x)`: `url` names a parameter, not a symbol.
+            value = node.child_by_field_name("value")
+            if value is not None:
+                self._emit_calls_and_refs(value, src_id, bound)
+            return
         if kind == "assignment":
             # The left-hand side is a binding occurrence; skip targets.
             right = node.child_by_field_name("right")
@@ -524,13 +576,25 @@ class _PythonBuilder:
             name = self._text(node)
             return "" if name in bound else name
         tail = self._attr_tail(node)
-        if node.type == "attribute" and tail and self._receiver is not None:
+        if node.type != "attribute" or not tail:
+            return tail
+        obj = node.child_by_field_name("object")
+        if self._receiver is not None and obj is not None and obj.type == "identifier":
             receiver, class_qn = self._receiver
-            obj = node.child_by_field_name("object")
-            if obj is not None and obj.type == "identifier":
-                if self._text(obj) == receiver:
-                    return self_target(class_qn, tail)
-        return tail
+            if self._text(obj) == receiver:
+                return self_target(class_qn, tail)
+        dotted = self._dotted_chain(obj)
+        if dotted is None:
+            return attr_target(tail)
+        head = dotted.split(".", 1)[0]
+        if dotted in self._local_types:
+            # A local whose every assignment is a call of one class.
+            typed = self._local_types[dotted]
+            flag = "i" if typed.split(".", 1)[0] in self._imported else "n"
+            return type_target(flag, typed, tail)
+        if head in bound:
+            return attr_target(tail)
+        return type_target("i" if head in self._imported else "n", dotted, tail)
 
     def _local_names(self, body) -> set[str]:
         """Names a function body binds: assignment, for, with-as, walrus targets.
@@ -574,6 +638,125 @@ class _PythonBuilder:
         elif target.type in _TARGET_GROUPS or target.type == "as_pattern_target":
             for child in target.named_children:
                 self._collect_targets(child, names)
+
+    def _import_bound_names(self, root) -> set[str]:
+        """Names any import in the file binds: ``import a.b`` binds ``a``."""
+        names: set[str] = set()
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            if node.type == "import_statement":
+                for child in node.named_children:
+                    if child.type == "aliased_import":
+                        alias = child.child_by_field_name("alias")
+                        if alias is not None:
+                            names.add(self._text(alias))
+                    elif child.type == "dotted_name":
+                        names.add(self._text(child).split(".", 1)[0])
+            elif node.type == "import_from_statement":
+                module = node.child_by_field_name("module_name")
+                for child in node.named_children:
+                    if module is not None and child.byte_range == module.byte_range:
+                        continue
+                    if child.type == "aliased_import":
+                        alias = child.child_by_field_name("alias")
+                        if alias is not None:
+                            names.add(self._text(alias))
+                    elif child.type == "dotted_name":
+                        names.add(self._text(child).split(".")[-1])
+            stack.extend(node.named_children)
+        return names
+
+    def _dotted_chain(self, node) -> str | None:
+        """``a.b.c`` for a chain of identifiers, else None (calls, subscripts)."""
+        if node is None:
+            return None
+        if node.type == "identifier":
+            return self._text(node)
+        if node.type == "attribute":
+            obj = self._dotted_chain(node.child_by_field_name("object"))
+            attr = node.child_by_field_name("attribute")
+            if obj is not None and attr is not None:
+                return f"{obj}.{self._text(attr)}"
+        return None
+
+    def _type_name(self, node) -> str | None:
+        """The class an annotation names: ``Name``, ``a.Name``, ``Name | None``."""
+        if node is None:
+            return None
+        if node.type == "type" and node.named_children:
+            return self._type_name(node.named_children[0])
+        if node.type == "binary_operator":
+            left = node.child_by_field_name("left")
+            right = node.child_by_field_name("right")
+            if right is not None and self._text(right) == "None":
+                return self._type_name(left)
+            if left is not None and self._text(left) == "None":
+                return self._type_name(right)
+            return None
+        dotted = self._dotted_chain(node)
+        if dotted and dotted.rsplit(".", 1)[-1][:1].isupper():
+            return dotted
+        return None
+
+    def _local_types_of(self, func_node, body) -> dict[str, str]:
+        """Locals and parameters whose class is known within the function.
+
+        A parameter or variable annotated with a class name has that class; a
+        local whose every assignment is a call of the same capitalized name
+        (``store = CodeStore(...)``) has that class. Anything else (mixed
+        assignments, loops, ``with ... as``, non-constructor values) is left
+        untyped, so its attribute accesses stay guesses.
+        """
+        types: dict[str, set[str | None]] = {}
+        params = func_node.child_by_field_name("parameters")
+        for param in params.named_children if params is not None else []:
+            if param.type in ("typed_parameter", "typed_default_parameter"):
+                name_node = param.child_by_field_name("name")
+                if name_node is None:
+                    name_node = next(
+                        (c for c in param.named_children if c.type == "identifier"),
+                        None,
+                    )
+                if name_node is not None:
+                    types.setdefault(self._text(name_node), set()).add(
+                        self._type_name(param.child_by_field_name("type"))
+                    )
+        stack = list(body.named_children)
+        while stack:
+            node = stack.pop()
+            if node.type in _SCOPE_TYPES:
+                continue
+            if node.type == "assignment":
+                left = node.child_by_field_name("left")
+                if left is not None and left.type == "identifier":
+                    annotation = self._type_name(node.child_by_field_name("type"))
+                    right = node.child_by_field_name("right")
+                    constructed = None
+                    if right is not None and right.type == "call":
+                        constructed = self._type_name(
+                            right.child_by_field_name("function")
+                        )
+                    types.setdefault(self._text(left), set()).add(
+                        annotation or constructed
+                    )
+            elif node.type in (
+                "for_statement",
+                "for_in_clause",
+                "as_pattern",
+                "named_expression",
+            ):
+                for target in ("left", "alias", "name"):
+                    bound_node = node.child_by_field_name(target)
+                    if bound_node is not None and bound_node.type == "identifier":
+                        types.setdefault(self._text(bound_node), set()).add(None)
+            stack.extend(node.named_children)
+        typed: dict[str, str] = {}
+        for name, kinds in types.items():
+            only = next(iter(kinds)) if len(kinds) == 1 else None
+            if only is not None:
+                typed[name] = only
+        return typed
 
     def _record_docstring(self, node_id: str, body) -> None:
         """Keep a def's or class's docstring: whitespace-collapsed, capped."""

@@ -273,6 +273,36 @@ the graph itself: 64% of the large codebase's edges are shared-name guesses at
 them changes what `impact` reaches, so it is a precision decision, not a speed
 one, to be measured against `make quality` on its own.
 
+__Cutting the guesses at their source (#46).__ A sample of 200 guess sites on
+each tree showed where they came from: keyword-argument names read as
+references (`f(url=x)` bound `url` to every `url` symbol, 37–46% of sites),
+bare names with no local binding (14–19%), receivers that are an imported
+module, a constructed or annotated local, or `self` with an inherited member
+(17–19%), and attributes of
+untyped receivers (23–26%). The first three are now bound by what the
+receiver names or dropped, and only the last stays a guess, kept in the
+caller's repository when it has a candidate (see the
+[indexing strategy workbook](indexing-strategy-workbook.md#call-resolution)).
+`make quality` stays green, with a new case asserting that `CodeStore.close`
+is reached only from its callers, where the `close` tail used to bind 20
+same-named methods across the four repositories. Full index, base and #46
+alternated on the same machine:
+
+| Measure | Large, before | Large, after | `~/Public`, before | `~/Public`, after |
+| --- | --- | --- | --- | --- |
+| edges | 7,432,367 | 4,378,328 | 317,048 | 219,493 |
+| guesses (`calls`, `references` at 0.55) | 3,375,555 | 1,081,740 | 99,723 | 26,918 |
+| `calls`, `references` at 0.90 or more | 408,479 | 490,514 | 18,138 | 21,416 |
+| `tests` at 0.55 | 1,393,992 | 569,302 | 36,022 | 9,949 |
+| write | 20.2–22.6 s | 9.1–11.8 s | 0.7 s | 0.8 s |
+| __total__ | __159–170 s__ | __112–134 s__ | __21.0–24.6 s__ | __17.7–19.6 s__ |
+
+Guesses fall by 68% on the large codebase and 73% on `~/Public`, and the
+edges `impact` reports as `exact` rise by a fifth, from receivers now typed.
+The before totals are slower than the 123–128 s of the #45 table because the
+machine was busier that day; the comparison is the alternated pair. Peak memory still
+varies from run to run, 3.9–5.3 GB on the large codebase on both sides.
+
 ## Graph traversal at scale: recursive SQL or DuckPGQ {#graph-traversal}
 
 Once a large graph _exists_, the second question is how `impact` and `explain`

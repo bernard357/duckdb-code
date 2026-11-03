@@ -100,12 +100,31 @@ four-repository `make quality` corpus, this takes the imports of the
 workspace's own packages that bind from 0 of 345 to all 345, plus the five
 relative imports.
 
-Type-aware resolution (tracking receiver/expression types for method and
-pointer-heavy calls, as the paper does for Go / C / C++) is a deliberate
-__future, language-scoped__ enhancement: the package targets Python and
-JavaScript/TypeScript today, where name-based resolution covers the common
-cases, so the numeric cascade lands first and type passes come only if a
-supported language needs them.
+__A receiver binds through what it names; a shared name is a guess only on
+an untyped attribute (#46).__ The Python extractor tells the resolver what a
+call's receiver is, and the resolver binds by it:
+
+| Raw target | Example | Binds to | Confidence |
+| --- | --- | --- | --- |
+| bare name | `helper()` | the module's own or imported name, else a name unique in the index | 0.90, 0.75 |
+| `self::<class>::<member>` | `self.close()` | the class's member, else its nearest base's | 1.0, 0.90 |
+| `type::<i\|n>::<dotted>::<member>` | `json.dumps()`, `store.close()` | the module's member, or the class's or a base's member | 0.95, 0.90 |
+| `attr::<member>` | `self.db.close()`, `f().close()` | every same-named symbol, in the caller's repository if it has one | 0.55 |
+
+A local or parameter has a type when it is annotated with a class (`X`,
+`a.X`, `X | None`) or every assignment to it calls the same class
+(`store = CodeStore(...)`); loop, `with ... as` and walrus targets, or mixed
+assignments, leave it untyped. `inherits` resolves first, so a member found
+on no class of its own is looked up on bases bound at 0.75 or more. A typed
+receiver the index cannot see into, such as `json` or a third-party package,
+keeps only a name unique in the index, never a guess, and keyword-argument
+names (`f(url=x)`) are not references at all. Import nodes are not call
+targets, so they no longer count against a name's uniqueness, and a name
+imported twice to the same target is one candidate. Attribute chains through
+an untyped receiver stay guesses; deeper type inference (return types,
+attribute types) is not attempted, and JavaScript/TypeScript resolves by
+name as before. The effect is measured in the
+[performance workbook](performance-workbook.md#large-graphs).
 
 ## The DuckDB schema {#schema}
 

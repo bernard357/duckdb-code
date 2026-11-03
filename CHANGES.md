@@ -6,6 +6,29 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
 
 ## Unreleased
 
+### Changed
+
+- __Calls bind through their receiver, and shared-name guesses drop by
+  two-thirds.__ A method call on a constructed or annotated local
+  (`store = CodeStore(...)`, `s: CodeStore`), on `self`, or on an imported
+  module binds to that class's, base's, or module's member at 0.90 or 0.95,
+  instead of every same-named symbol at 0.55. A bare name with no local
+  binding binds only when unique in the index, and a guess on an untyped
+  attribute stays within the caller's repository when it can. Guess edges fall
+  by 68% on a 46,222-file codebase (7.4 to 4.4 million edges, a full index
+  about a quarter faster) and 73% on `~/Public`, and `impact` reaches fewer
+  unrelated symbols (#46).
+
+### Fixed
+
+- __Keyword-argument names are no longer references.__ `f(url=x)` bound `url`
+  to every symbol named `url`; only the argument's value is read now (#46).
+- __A name imported twice is not ambiguous.__ Importing the same name at the
+  top of a module and again in a function, or a name shared with import
+  nodes, no longer lowers a unique bind to a guess (#46).
+
+Rebuild existing indexes with `duckdb-code index <folder> --rebuild`.
+
 ## v261103
 
 A scale and accuracy release: indexing goes parallel and its whole-graph passes

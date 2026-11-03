@@ -34,7 +34,12 @@ from duckdb_code.embedders import resolve_embedder
 from duckdb_code.etag import compute_etag
 from duckdb_code.extractors.base import Extraction
 from duckdb_code.extractors.markdown import _slug
-from duckdb_code.extractors.python import UNRESOLVED, split_self_target
+from duckdb_code.extractors.python import (
+    UNRESOLVED,
+    split_attr_target,
+    split_self_target,
+    split_type_target,
+)
 from duckdb_code.extractors.registry import detect_language, resolve_extractor
 from duckdb_code.models import (
     CONFIDENCE_EXACT,
@@ -53,6 +58,7 @@ logger = logging.getLogger(__name__)
 # The cross-file edge kinds, resolved by the resolution pass.
 _IMPORT_KINDS = ("imports",)
 _SCOPED_KINDS = ("inherits", "calls", "references")
+_MEMBER_KINDS = ("calls", "references")
 
 # Maximum number of in-set symbols a bare-name suffix match may bind to before
 # the scoped edge is treated as unresolvable noise and dropped. A common method
@@ -199,9 +205,14 @@ def resolve_edges(
     # hotspot). Built from ``by_qn`` in its insertion order, appending each qn's
     # ids in order, so the resulting lists are byte-identical to the old
     # comprehension ``[nid for qn, nids in by_qn.items() ... if last == raw]``.
+    # Import nodes are left out: their qualified name ends with the imported
+    # name (``m::import:pkg.f``) but a call never targets the import itself,
+    # and counting them would turn a unique name into a shared one.
     by_last_segment: dict[str, list[str]] = {}
     for qn, nids in by_qn.items():
-        by_last_segment.setdefault(qn.rsplit(".", 1)[-1], []).extend(nids)
+        targets = [nid for nid in nids if node_by_id[nid].kind != "import"]
+        if targets:
+            by_last_segment.setdefault(qn.rsplit(".", 1)[-1], []).extend(targets)
 
     # Seed half of by_local (fix 1): PURE STRING TEST. A class/function node
     # whose qualified_name == f"{m_qn}.{name}" is a module-top-level define
@@ -251,34 +262,47 @@ def resolve_edges(
         for target in targets:
             resolved.append(_bind(edge, target, confidence))
             if module_qn is not None:
+                # A name imported twice (at the top and in a function) to the
+                # same target stays one candidate, not an ambiguous pair.
                 bound = raw.split(".")[-1] if "." in raw else raw
-                by_local.setdefault((module_qn, bound), []).append(target)
+                _add_local(by_local, (module_qn, bound), target)
                 # import M also binds the head name M.
                 head = raw.split(".")[0]
                 if head:
-                    by_local.setdefault((module_qn, head), []).append(target)
+                    _add_local(by_local, (module_qn, head), target)
 
-    # Phase B: inherits, then calls/references. Reads by_local, never mutates it.
+    # Phase B1: inherits, so a call can bind through a class's bases. Only a
+    # base bound at unique-name confidence or better enters the bases map.
+    bases: dict[str, list[str]] = {}
     for edge in edges:
-        if edge.kind not in _SCOPED_KINDS or not _is_unresolved(edge):
+        if edge.kind != "inherits" or not _is_unresolved(edge):
             continue
         src = node_by_id.get(edge.src_id)
         module_qn = by_path_module.get(src.path) if src else None
-        raw = _raw_target(edge.dst_id)
         is_js_ts = src is not None and src.language in _JS_TS_LANGUAGES
-        # ``self.name`` in a method: the class's own member binds exactly, as
-        # Python's attribute lookup finds it first; otherwise (an inherited or
-        # instance attribute) fall back to the bare name.
-        receiver = split_self_target(raw)
-        if receiver is not None:
-            class_qn, raw = receiver
-            own = by_qn.get(f"{class_qn}.{raw}")
-            if own:
-                for dst_id in own:
-                    resolved.append(_bind(edge, dst_id, CONFIDENCE_EXACT))
-                continue
         for dst_id, confidence in _resolve_scoped(
-            edge.kind, raw, module_qn, by_local, by_last_segment, is_js_ts
+            edge.kind,
+            _raw_target(edge.dst_id),
+            module_qn,
+            by_local,
+            by_last_segment,
+            is_js_ts,
+        ):
+            resolved.append(_bind(edge, dst_id, confidence))
+            if confidence >= CONFIDENCE_UNIQUE_NAME:
+                bases.setdefault(edge.src_id, []).append(dst_id)
+
+    # Phase B2: calls/references. Reads by_local, never mutates it.
+    members = _MemberResolver(
+        by_qn, by_local, by_last_segment, node_by_id, bases, import_names
+    )
+    for edge in edges:
+        if edge.kind not in _MEMBER_KINDS or not _is_unresolved(edge):
+            continue
+        src = node_by_id.get(edge.src_id)
+        module_qn = by_path_module.get(src.path) if src else None
+        for dst_id, confidence in members.resolve(
+            edge.kind, _raw_target(edge.dst_id), src, module_qn
         ):
             resolved.append(_bind(edge, dst_id, confidence))
 
@@ -568,6 +592,15 @@ def _match_page_path(
     return None
 
 
+def _add_local(
+    by_local: dict[tuple[str, str], list[str]], key: tuple[str, str], target: str
+) -> None:
+    """Add ``target`` as a candidate of a module-local name, once."""
+    candidates = by_local.setdefault(key, [])
+    if target not in candidates:
+        candidates.append(target)
+
+
 def _bind(edge: Edge, dst_id: str, confidence: float) -> Edge:
     return Edge(
         src_id=edge.src_id,
@@ -697,6 +730,179 @@ class _ImportNames:
         ]
         pool = same or candidates
         return pool, (CONFIDENCE_IMPORT if len(pool) == 1 else CONFIDENCE_SUFFIX)
+
+
+class _MemberResolver:
+    """Bind ``calls``/``references`` raw targets once ``inherits`` is resolved.
+
+    A Python raw target is a bare name, ``self::<class>::<member>``,
+    ``type::<flag>::<dotted>::<member>`` (a receiver of known module or class)
+    or ``attr::<member>`` (an untyped receiver); see the Python extractor.
+    Typed receivers bind through the module's names; a shared-name guess
+    (0.55) is only made for an untyped attribute, within the caller's
+    repository when it has candidates. JS/TS targets resolve as before.
+    """
+
+    def __init__(
+        self,
+        by_qn: dict[str, list[str]],
+        by_local: dict[tuple[str, str], list[str]],
+        by_last_segment: dict[str, list[str]],
+        node_by_id: dict[str, Node],
+        bases: dict[str, list[str]],
+        import_names: "_ImportNames",
+    ) -> None:
+        self.by_qn = by_qn
+        self.by_local = by_local
+        self.by_last_segment = by_last_segment
+        self.node_by_id = node_by_id
+        self.bases = bases
+        self.import_names = import_names
+
+    def resolve(
+        self, kind: str, raw: str, src: Node | None, module_qn: str | None
+    ) -> list[tuple[str, float]]:
+        if src is not None and src.language in _JS_TS_LANGUAGES:
+            return _resolve_scoped(
+                kind, raw, module_qn, self.by_local, self.by_last_segment, True
+            )
+        receiver = split_self_target(raw)
+        if receiver is not None:
+            return self._self_member(kind, *receiver, src)
+        typed = split_type_target(raw)
+        if typed is not None:
+            return self._typed(kind, *typed, src, module_qn)
+        member = split_attr_target(raw)
+        if member is not None:
+            return self._attribute(kind, member, src)
+        return self._bare(kind, raw, module_qn)
+
+    def _self_member(
+        self, kind: str, class_qn: str, member: str, src: Node | None
+    ) -> list[tuple[str, float]]:
+        """``self.member``: the class's own member is exact, a base's is 0.90."""
+        own = self.by_qn.get(f"{class_qn}.{member}")
+        if own:
+            return [(nid, CONFIDENCE_EXACT) for nid in own]
+        classes = [
+            nid for nid in self.by_qn.get(class_qn, []) if self._is(nid, "class")
+        ]
+        start = [base for cid in classes for base in self.bases.get(cid, [])]
+        inherited = self._member_of(start, member)
+        if inherited:
+            return [(nid, CONFIDENCE_SAME_MODULE) for nid in inherited]
+        return self._attribute(kind, member, src)
+
+    def _typed(
+        self,
+        kind: str,
+        flag: str,
+        dotted: str,
+        member: str,
+        src: Node | None,
+        module_qn: str | None,
+    ) -> list[tuple[str, float]]:
+        """``<dotted>.member`` where ``dotted`` names a module or a class."""
+        head, _, rest = dotted.partition(".")
+        targets = set(self.by_local.get((module_qn, head), [])) if module_qn else set()
+        if len(targets) == 1:
+            hits, confidence = self._through(next(iter(targets)), rest, member)
+            if hits:
+                return [(nid, confidence) for nid in hits]
+        if flag == "i":
+            # An import the index cannot see into (``json``, a third-party
+            # package): only a symbol whose name is unique in the index binds.
+            unique = _resolve_scoped(
+                kind, member, None, self.by_local, self.by_last_segment, False
+            )
+            return unique if len(unique) == 1 else []
+        return self._attribute(kind, member, src)
+
+    def _through(
+        self, target_id: str, rest: str, member: str
+    ) -> tuple[list[str], float]:
+        """The ``member`` of a module or class ``target_id`` (``.rest`` deep)."""
+        node = self.node_by_id.get(target_id)
+        if node is None:
+            return [], CONFIDENCE_SUFFIX
+        containers = [target_id]
+        if rest:
+            containers = self.by_qn.get(f"{node.qualified_name}.{rest}", [])
+            # ``import a.b`` binds ``a`` to the module ``a.b`` itself.
+            if not containers and node.kind == "module":
+                qn = node.qualified_name
+                if qn == rest or qn.endswith(f".{rest}"):
+                    containers = [target_id]
+        if len(containers) != 1:
+            return [], CONFIDENCE_SUFFIX
+        container = self.node_by_id.get(containers[0])
+        if container is None:
+            return [], CONFIDENCE_SUFFIX
+        if container.kind == "module":
+            hits = self.by_qn.get(f"{container.qualified_name}.{member}", [])
+            return hits, CONFIDENCE_IMPORT
+        if container.kind == "class":
+            return self._member_of([container.node_id], member), CONFIDENCE_SAME_MODULE
+        return [], CONFIDENCE_SUFFIX
+
+    def _member_of(self, class_ids: list[str], member: str) -> list[str]:
+        """The member on the classes, else on their nearest bases."""
+        seen: set[str] = set()
+        frontier = list(dict.fromkeys(class_ids))
+        while frontier:
+            hits: list[str] = []
+            for cid in frontier:
+                node = self.node_by_id.get(cid)
+                if node is not None:
+                    hits.extend(self.by_qn.get(f"{node.qualified_name}.{member}", []))
+            if hits:
+                return list(dict.fromkeys(hits))
+            seen.update(frontier)
+            frontier = list(
+                dict.fromkeys(
+                    base
+                    for cid in frontier
+                    for base in self.bases.get(cid, [])
+                    if base not in seen
+                )
+            )
+        return []
+
+    def _attribute(
+        self, kind: str, member: str, src: Node | None
+    ) -> list[tuple[str, float]]:
+        """A shared-name guess, kept within the caller's repository if it can."""
+        hits = _resolve_scoped(
+            kind, member, None, self.by_local, self.by_last_segment, False
+        )
+        if len(hits) <= 1 or src is None:
+            return hits
+        scope = self.import_names.scope_of(src.path)
+        same = [
+            (nid, confidence)
+            for nid, confidence in hits
+            if self._scope_of_id(nid) == scope
+        ]
+        return same or hits
+
+    def _bare(
+        self, kind: str, raw: str, module_qn: str | None
+    ) -> list[tuple[str, float]]:
+        """A bare name binds in its module, else only if unique in the index."""
+        hits = _resolve_scoped(
+            kind, raw, module_qn, self.by_local, self.by_last_segment, False
+        )
+        if module_qn is not None and self.by_local.get((module_qn, raw)):
+            return hits
+        return hits if len(hits) == 1 else []
+
+    def _is(self, node_id: str, kind: str) -> bool:
+        node = self.node_by_id.get(node_id)
+        return node is not None and node.kind == kind
+
+    def _scope_of_id(self, node_id: str) -> str:
+        node = self.node_by_id.get(node_id)
+        return self.import_names.scope_of(node.path) if node is not None else ""
 
 
 def _resolve_python_import(
