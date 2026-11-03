@@ -15,6 +15,14 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
   index of `~/Public` drops from 31 s to 18 s, and of a 46,222-file workspace of
   home-assistant/core, microsoft/vscode, and apache/airflow from 333 s to
   241 s (#43).
+- __Large graphs index about twice as fast.__ Test edges decide whether a
+  file is a test once per path instead of once per edge, PageRank runs over
+  numpy arrays, nodes and edges are built with pydantic's compiled validation
+  instead of the slower pure-Python `model_construct`, and an index build
+  runs with Python's cyclic garbage collector paused, collecting once at the
+  end. On the 46,222-file workspace a full index drops from 241–273 s to
+  123–128 s, and on `~/Public` from 18 s to 15 s, with the same stored graph
+  (#45).
 
 ### Fixed
 

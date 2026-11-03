@@ -559,3 +559,120 @@ def test_worker_count_honours_the_environment(monkeypatch):
     assert _worker_count() == 3
     monkeypatch.delenv("DUCKDB_CODE_WORKERS")
     assert 1 <= _worker_count() <= 8
+
+
+# The large-graph passes (resolution, test edges) must produce exactly what
+# their straightforward reference versions produce.
+
+
+def _generated_tree(root: Path, modules: int = 300) -> Path:
+    """A tree of ``modules`` modules calling each other, with test files."""
+    tree = root / "gen"
+    (tree / "pkg").mkdir(parents=True)
+    (tree / "tests").mkdir()
+    (tree / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    for i in range(modules):
+        callee = (i * 7 + 3) % modules
+        (tree / "pkg" / f"m{i}.py").write_text(
+            f"from pkg.m{callee} import f{callee}\n\n\n"
+            f"class C{i}:\n    def run(self):\n        return self.value\n\n\n"
+            f"def f{i}(x):\n    return f{callee}(x) + x.value\n",
+            encoding="utf-8",
+        )
+        if i % 5 == 0:
+            (tree / "tests" / f"test_m{i}.py").write_text(
+                f"from pkg.m{i} import C{i}, f{i}\n\n\n"
+                f"def test_f{i}():\n    assert f{i}(1) and C{i}().run()\n",
+                encoding="utf-8",
+            )
+    return tree
+
+
+def _reference_test_edges(nodes, resolved):
+    """The per-edge reference: `_is_test_path` evaluated for every edge."""
+    from duckdb_code.indexer import _TEST_REACH_KINDS, _is_test_path
+    from duckdb_code.models import Edge
+
+    path_by_id = {node.node_id: node.path for node in nodes}
+    seen: set[tuple[str, str]] = set()
+    out = []
+    for edge in resolved:
+        if edge.kind not in _TEST_REACH_KINDS:
+            continue
+        src_path = path_by_id.get(edge.src_id)
+        dst_path = path_by_id.get(edge.dst_id)
+        if src_path is None or dst_path is None:
+            continue
+        if not _is_test_path(src_path) or _is_test_path(dst_path):
+            continue
+        if (edge.src_id, edge.dst_id) in seen:
+            continue
+        seen.add((edge.src_id, edge.dst_id))
+        out.append(
+            Edge(
+                src_id=edge.src_id,
+                dst_id=edge.dst_id,
+                kind="tests",
+                path=src_path,
+                resolution=edge.resolution,
+                confidence=edge.confidence,
+            )
+        )
+    return out
+
+
+def _validated_bind(edge, dst_id, confidence):
+    """The reference bind: a fully validated pydantic Edge."""
+    from duckdb_code.models import Edge, resolution_of
+
+    return Edge(
+        src_id=edge.src_id,
+        dst_id=dst_id,
+        kind=edge.kind,
+        path=edge.path,
+        resolution=resolution_of(confidence),
+        confidence=confidence,
+    )
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("which", ["sample", "markdown", "generated"])
+def test_resolution_and_test_edges_match_their_references(which, tmp_path, monkeypatch):
+    import duckdb_code.indexer as indexer
+
+    folder = {"sample": FIXTURE, "markdown": MARKDOWN_FIXTURE}.get(which) or (
+        _generated_tree(tmp_path)
+    )
+    rows, nodes, edges, _languages, _skipped, _docs = indexer._extract_folder(
+        folder, True, workers=1
+    )
+    repositories = indexer._discover_repositories(folder, rows)
+    fast = indexer.resolve_edges(nodes, edges, repositories)
+    monkeypatch.setattr(indexer, "_bind", _validated_bind)
+    reference = indexer.resolve_edges(nodes, edges, repositories)
+    assert fast == reference
+    assert indexer.enrich_test_edges(nodes, fast) == _reference_test_edges(nodes, fast)
+    if which == "generated":
+        assert any(e.kind == "calls" for e in fast)
+        assert indexer.enrich_test_edges(nodes, fast)
+
+
+def test_index_build_restores_the_garbage_collector(tmp_path, monkeypatch):
+    import gc
+
+    import duckdb_code.indexer as indexer
+
+    assert gc.isenabled()
+    store = CodeStore(db_path=str(tmp_path / "gc.duckdb"), root=str(FIXTURE))
+    index_folder(store, FIXTURE)
+    assert gc.isenabled()
+
+    def broken(*_args, **_kwargs):
+        assert not gc.isenabled(), "the build runs with the collector paused"
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(indexer, "_full_index", broken)
+    with pytest.raises(RuntimeError):
+        index_folder(store, FIXTURE, rebuild=True)
+    assert gc.isenabled()
+    store.close()

@@ -192,3 +192,50 @@ def test_cycles_ignore_ambiguous_name_binds(tmp_path):
     names = [sorted(member.name for member in item.members) for item in result.results]
     assert ["close", "close"] not in names
     assert ["a", "b"] in names
+
+
+def _reference_pagerank(node_ids, out_edges, damping=0.85, iterations=20):
+    """The plain-dict PageRank the indexer used before numpy."""
+    n = len(node_ids)
+    rank = {nid: 1.0 / n for nid in node_ids}
+    base = (1.0 - damping) / n
+    for _ in range(iterations):
+        dangling = sum(rank[nid] for nid in node_ids if not out_edges.get(nid))
+        shared = damping * dangling / n
+        nxt = {nid: base + shared for nid in node_ids}
+        for src, dsts in out_edges.items():
+            share = damping * rank[src] / len(dsts)
+            for dst in dsts:
+                nxt[dst] += share
+        rank = nxt
+    return rank
+
+
+def test_centrality_matches_the_reference_pagerank(tmp_path):
+    import random
+
+    from duckdb_code.indexer import _analytics_adjacency
+
+    store = _cyclic_tree(tmp_path)
+    try:
+        node_ids, out_edges = _analytics_adjacency(store)
+        expected = _reference_pagerank(node_ids, out_edges)
+        stored = dict(
+            store._con.execute("SELECT node_id, centrality FROM nodes").fetchall()
+        )
+    finally:
+        store.close()
+    assert stored.keys() == expected.keys()
+    for nid, value in expected.items():
+        assert stored[nid] == pytest.approx(value, rel=1e-9, abs=1e-15)
+
+    from duckdb_code.indexer import _pagerank
+
+    rng = random.Random(7)
+    ids = [f"n{i}" for i in range(400)]
+    graph = {nid: [rng.choice(ids) for _ in range(rng.randint(0, 6))] for nid in ids}
+    graph = {k: v for k, v in graph.items() if v}
+    reference = _reference_pagerank(ids, graph)
+    computed = _pagerank(ids, graph)
+    for nid in ids:
+        assert computed[nid] == pytest.approx(reference[nid], rel=1e-9, abs=1e-15)

@@ -13,10 +13,13 @@ for the incremental seam and is NOT called by the full-build path; it is proven
 in isolation by the seam test.
 """
 
+import contextlib
 import datetime
+import gc
 import logging
 import os
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
@@ -361,6 +364,9 @@ def enrich_test_edges(nodes: list[Node], resolved: list[Edge]) -> list[Edge]:
     sees concrete node ids, not raw targets.
     """
     path_by_id = {node.node_id: node.path for node in nodes}
+    # Decide test-or-not once per distinct path: an index has tens of
+    # thousands of paths but millions of edges.
+    is_test = {path: _is_test_path(path) for path in set(path_by_id.values())}
     seen: set[tuple[str, str]] = set()
     test_edges: list[Edge] = []
     for edge in resolved:
@@ -370,7 +376,7 @@ def enrich_test_edges(nodes: list[Node], resolved: list[Edge]) -> list[Edge]:
         dst_path = path_by_id.get(edge.dst_id)
         if src_path is None or dst_path is None:
             continue
-        if not _is_test_path(src_path) or _is_test_path(dst_path):
+        if not is_test[src_path] or is_test[dst_path]:
             continue
         key = (edge.src_id, edge.dst_id)
         if key in seen:
@@ -840,13 +846,14 @@ def index_folder(
     if not folder.is_dir():
         raise NotADirectoryError(f"Not a directory: {folder}")
 
-    if rebuild or not _db_is_populated(store):
-        return _full_index(
+    with _collector_paused():
+        if rebuild or not _db_is_populated(store):
+            return _full_index(
+                store, folder, recursive, use_default_ignores=use_default_ignores
+            )
+        return _incremental_index(
             store, folder, recursive, use_default_ignores=use_default_ignores
         )
-    return _incremental_index(
-        store, folder, recursive, use_default_ignores=use_default_ignores
-    )
 
 
 # Parallel extraction: below this many files a process pool's start-up (about
@@ -900,7 +907,7 @@ def _extract_chunk(folder: str, chunk: list[tuple[str, str]]) -> list[_Extracted
 
 def _extract_in_parallel(
     folder: Path, candidates: list[tuple[str, str]], workers: int, chunk_size: int
-) -> list[_Extracted]:
+) -> Iterator[_Extracted]:
     """Extract ``candidates`` across a process pool, in their walk order.
 
     The Markdown parser is pure Python and the tree walks run in Python, so
@@ -916,12 +923,10 @@ def _extract_in_parallel(
     ]
     context = multiprocessing.get_context("spawn")
     with ProcessPoolExecutor(max_workers=workers, mp_context=context) as pool:
-        results: list[_Extracted] = []
         for chunk_results in pool.map(
             _extract_chunk, [str(folder)] * len(chunks), chunks
         ):
-            results.extend(chunk_results)
-    return results
+            yield from chunk_results
 
 
 def _extract_folder(
@@ -983,19 +988,17 @@ def _extract_folder(
     if count > 1 and len(candidates) >= max(floor, 1):
         extracted = _extract_in_parallel(folder, candidates, count, chunk_size)
     else:
-        extracted = [_extract_one(str(folder), rel, lang) for rel, lang in candidates]
+        extracted = (_extract_one(str(folder), rel, lang) for rel, lang in candidates)
     for result in extracted:
         if result is None:
             skipped += 1
             continue
         rel, language, etag, node_rows, edge_rows, file_docstrings = result
         all_nodes.extend(
-            Node.model_construct(**dict(zip(_NODE_FIELDS, row, strict=True)))
-            for row in node_rows
+            Node(**dict(zip(_NODE_FIELDS, row, strict=True))) for row in node_rows
         )
         all_edges.extend(
-            Edge.model_construct(**dict(zip(_EDGE_FIELDS, row, strict=True)))
-            for row in edge_rows
+            Edge(**dict(zip(_EDGE_FIELDS, row, strict=True))) for row in edge_rows
         )
         docstrings.update(file_docstrings)
         file_rows.append((rel, language, etag))
@@ -1162,6 +1165,26 @@ def _discover_repositories(
         d for d in sorted(directories) if (folder / d / ".git").exists()
     )
     return repositories
+
+
+@contextlib.contextmanager
+def _collector_paused() -> Iterator[None]:
+    """Pause Python's cyclic garbage collector for an index build.
+
+    A build allocates millions of nodes and edges that stay alive until it
+    ends, and the collector keeps rescanning them as allocations pile up:
+    edge resolution on a 46,000-file workspace took 33 s with it running and
+    19.5 s with it paused. Reference counting still frees everything acyclic;
+    the collector runs once when the build is over.
+    """
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        yield
+    finally:
+        if was_enabled:
+            gc.enable()
+        gc.collect()
 
 
 def _full_index(
@@ -1527,6 +1550,37 @@ def _analytics_adjacency(store: CodeStore) -> tuple[list[str], dict[str, list[st
     return node_ids, out_edges
 
 
+def _pagerank(node_ids: list[str], out_edges: dict[str, list[str]]) -> dict[str, float]:
+    """PageRank with dangling mass shared evenly, over numpy arrays.
+
+    The same arithmetic as the straightforward dict loop (a fixed
+    ``_PAGERANK_ITERATIONS``, damping ``_PAGERANK_DAMPING``, every node starting
+    at ``1/n``), vectorized: one ``bincount`` per iteration instead of a Python
+    pass over every edge, which is what a million-node graph needs.
+    """
+    n = len(node_ids)
+    index = {nid: i for i, nid in enumerate(node_ids)}
+    sources: list[int] = []
+    targets: list[int] = []
+    for source, dsts in out_edges.items():
+        position = index[source]
+        sources.extend([position] * len(dsts))
+        targets.extend(index[target] for target in dsts)
+    src = np.array(sources, dtype=np.int64)
+    dst = np.array(targets, dtype=np.int64)
+    out_degree = np.bincount(src, minlength=n).astype(np.float64)
+    dangling = out_degree == 0
+    weight = np.zeros(n, dtype=np.float64)
+    np.divide(1.0, out_degree, out=weight, where=~dangling)
+    rank = np.full(n, 1.0 / n, dtype=np.float64)
+    base = (1.0 - _PAGERANK_DAMPING) / n
+    for _ in range(_PAGERANK_ITERATIONS):
+        shared = _PAGERANK_DAMPING * rank[dangling].sum() / n
+        flow = np.bincount(dst, weights=rank[src] * weight[src], minlength=n)
+        rank = base + shared + _PAGERANK_DAMPING * flow
+    return {nid: float(rank[i]) for i, nid in enumerate(node_ids)}
+
+
 def _compute_centrality(store: CodeStore) -> None:
     """Compute a PageRank-style centrality per node and persist it.
 
@@ -1537,20 +1591,9 @@ def _compute_centrality(store: CodeStore) -> None:
     system, so a fixed iteration budget is enough and keeps the cost bounded.
     """
     node_ids, out_edges = _analytics_adjacency(store)
-    n = len(node_ids)
-    if n == 0:
+    if not node_ids:
         return
-    rank = {nid: 1.0 / n for nid in node_ids}
-    base = (1.0 - _PAGERANK_DAMPING) / n
-    for _ in range(_PAGERANK_ITERATIONS):
-        dangling = sum(rank[nid] for nid in node_ids if not out_edges.get(nid))
-        shared = _PAGERANK_DAMPING * dangling / n
-        nxt = {nid: base + shared for nid in node_ids}
-        for src, dsts in out_edges.items():
-            share = _PAGERANK_DAMPING * rank[src] / len(dsts)
-            for dst in dsts:
-                nxt[dst] += share
-        rank = nxt
+    rank = _pagerank(node_ids, out_edges)
     _bulk_update(
         store._con,
         "nodes",

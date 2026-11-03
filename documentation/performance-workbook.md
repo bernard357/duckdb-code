@@ -230,6 +230,49 @@ centrality, which take 115 s together on the large codebase against 3 s on
 `~/Public`, and by 7.4 million edges, about 160 per file against 60 on
 `~/Public`. Those are the next levers, measured on the same corpus.
 
+## Large graphs: the Python passes and the collector {#large-graphs}
+
+Profiling the three passes on the large codebase pointed at four costs (#45).
+Test-edge derivation decided whether a file is a test once per edge, building a
+`PurePosixPath` 6.9 million times for 46,222 distinct paths. PageRank ran as a
+Python loop over 4.4 million dependency edges, 20 times. Python's cyclic garbage
+collector kept rescanning the millions of nodes and edges a build holds alive:
+edge resolution took 33 s with it running and 19.5 s with it paused, the same in
+both of two attempts. And the parallel merge rebuilt nodes and edges with
+pydantic's `model_construct`, which is pure Python and 2.4 times slower than
+validated construction in pydantic's compiled core (1.83 s against 0.76 s per
+million edges); the cProfile hotspot on validation in `_bind` had suggested the
+opposite, and an A/B test settled it.
+
+__Decision (shipped, #45).__ The test-or-not decision is made once per path,
+PageRank runs as the same arithmetic over numpy arrays (one `bincount` per
+iteration, equal to the dict loop within 1e-9), every node and edge is built
+with validated construction, and an index build runs with the cyclic collector
+paused, collecting once at the end; reference counting still frees everything
+acyclic. Tests compare the resolved edges, the test edges, and the centrality
+with reference implementations on both fixtures, a generated 300-module tree,
+and a random graph. Full index, two runs each:
+
+| Phase | Large, before | Large, after | `~/Public`, before | `~/Public`, after |
+| --- | --- | --- | --- | --- |
+| extract | 47.0–47.7 s | 29.5 s | 5.7 s | 4.6–4.8 s |
+| resolve edges | 36.9–48.3 s | 13.6–14.2 s | 1.0 s | 0.5 s |
+| derive test edges | 39.4–40.0 s | 4.7–5.1 s | 0.5 s | 0.1 s |
+| centrality | 38.3–44.9 s | 7.9–8.6 s | 0.9 s | 0.2 s |
+| __total__ | __241–273 s__ | __123–128 s__ | __18.2 s__ | __14.4–15.0 s__ |
+| throughput | 169–192 files/s | 360–377 files/s | 219 files/s | 266–276 files/s |
+
+The stored graph is unchanged: the same 948,430 nodes and 7,432,367 edges on the
+large codebase. Peak memory is not, and varies from run to run: 4.1–5.2 GB on
+the large codebase, as before, and 2.9 GB on `~/Public`, up from 2.4 GB, since
+cyclic garbage now waits for the final collection. What remains is the size of
+the graph itself: 64% of the large codebase's edges are shared-name guesses at
+0.55 (`references` 1.92 million, `calls` 1.45 million, and the 1.39 million
+`tests` edges derived from them), mostly attribute names such as `key`,
+`value`, and `domain` bound to up to 20 same-named symbols at every use. Cutting
+them changes what `impact` reaches, so it is a precision decision, not a speed
+one, to be measured against `make quality` on its own.
+
 ## Graph traversal at scale: recursive SQL or DuckPGQ {#graph-traversal}
 
 Once a large graph _exists_, the second question is how `impact` and `explain`
