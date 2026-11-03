@@ -849,8 +849,89 @@ def index_folder(
     )
 
 
+# Parallel extraction: below this many files a process pool's start-up (about
+# 0.7 s for spawned workers importing the parsers) costs more than it saves at a
+# few milliseconds per file, so small trees and the test suite stay sequential.
+_PARALLEL_MIN_FILES = 500
+# Files per task sent to a worker: large enough that the per-task overhead is
+# small, small enough that one slow file does not leave the other workers idle.
+_PARALLEL_CHUNK_SIZE = 64
+# More workers than this stop paying off on the I/O and the merge.
+_PARALLEL_MAX_WORKERS = 8
+_NODE_FIELDS = tuple(Node.model_fields)
+_EDGE_FIELDS = tuple(Edge.model_fields)
+
+# One extracted file, as plain tuples a worker can send back cheaply:
+# (rel, language, etag, node rows, edge rows, docstrings), or None if unreadable.
+_Extracted = tuple[str, str, str, list[tuple], list[tuple], dict[str, str]] | None
+
+
+def _worker_count() -> int:
+    """Extraction workers: ``DUCKDB_CODE_WORKERS``, else the cores up to 8."""
+    configured = os.environ.get("DUCKDB_CODE_WORKERS", "").strip()
+    if configured:
+        return max(1, int(configured))
+    return max(1, min(os.cpu_count() or 1, _PARALLEL_MAX_WORKERS))
+
+
+def _extract_one(folder: str, rel: str, language: str) -> _Extracted:
+    """Read, hash, and extract one file; plain tuples so a worker can return it."""
+    try:
+        raw = (Path(folder) / rel).read_bytes()
+    except OSError as exc:  # pragma: no cover - rare mid-walk vanish
+        logger.warning("skipping unreadable file %s: %s", rel, exc)
+        return None
+    text = raw.decode("utf-8", errors="replace")
+    extraction = resolve_extractor(language).extract(text, rel)
+    return (
+        rel,
+        language,
+        compute_etag(text),
+        [tuple(getattr(n, f) for f in _NODE_FIELDS) for n in extraction.nodes],
+        [tuple(getattr(e, f) for f in _EDGE_FIELDS) for e in extraction.edges],
+        dict(extraction.docstrings),
+    )
+
+
+def _extract_chunk(folder: str, chunk: list[tuple[str, str]]) -> list[_Extracted]:
+    """Worker entry point: extract a chunk of ``(rel, language)`` files."""
+    return [_extract_one(folder, rel, language) for rel, language in chunk]
+
+
+def _extract_in_parallel(
+    folder: Path, candidates: list[tuple[str, str]], workers: int, chunk_size: int
+) -> list[_Extracted]:
+    """Extract ``candidates`` across a process pool, in their walk order.
+
+    The Markdown parser is pure Python and the tree walks run in Python, so
+    threads would stay serialized; processes parse in parallel. ``map`` yields
+    the chunks in submission order, so the merged result is exactly the
+    sequential one: same files, nodes, edges, and order.
+    """
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
+
+    chunks = [
+        candidates[i : i + chunk_size] for i in range(0, len(candidates), chunk_size)
+    ]
+    context = multiprocessing.get_context("spawn")
+    with ProcessPoolExecutor(max_workers=workers, mp_context=context) as pool:
+        results: list[_Extracted] = []
+        for chunk_results in pool.map(
+            _extract_chunk, [str(folder)] * len(chunks), chunks
+        ):
+            results.extend(chunk_results)
+    return results
+
+
 def _extract_folder(
-    folder: Path, recursive: bool, *, use_default_ignores: bool = True
+    folder: Path,
+    recursive: bool,
+    *,
+    use_default_ignores: bool = True,
+    workers: int | None = None,
+    min_files: int | None = None,
+    chunk_size: int = _PARALLEL_CHUNK_SIZE,
 ) -> tuple[
     list[tuple[str, str, str]],
     list[Node],
@@ -870,6 +951,10 @@ def _extract_folder(
     ``.duckdbgraphignore``) and the ``use_default_ignores`` flag prune the walk
     in :func:`_iter_files`; the files that walk dropped are folded into
     ``skipped`` alongside the unsupported-extension and unreadable skips.
+
+    From :data:`_PARALLEL_MIN_FILES` files on, files are extracted by a pool
+    of ``workers`` processes (see :func:`_worker_count`) and merged in walk
+    order, so the result is identical to the sequential one.
     """
     file_rows: list[tuple[str, str, str]] = []
     all_nodes: list[Node] = []
@@ -885,25 +970,34 @@ def _extract_folder(
         ignore_scope=ignore_scope,
     )
 
+    candidates: list[tuple[str, str]] = []
     for abs_path in paths:
         rel = abs_path.relative_to(folder).as_posix()
         language = detect_language(rel)
         if language is None:
             skipped += 1
             continue
-        try:
-            raw = abs_path.read_bytes()
-        except OSError as exc:  # pragma: no cover - rare mid-walk vanish
+        candidates.append((rel, language))
+    count = _worker_count() if workers is None else workers
+    floor = _PARALLEL_MIN_FILES if min_files is None else min_files
+    if count > 1 and len(candidates) >= max(floor, 1):
+        extracted = _extract_in_parallel(folder, candidates, count, chunk_size)
+    else:
+        extracted = [_extract_one(str(folder), rel, lang) for rel, lang in candidates]
+    for result in extracted:
+        if result is None:
             skipped += 1
-            logger.warning("skipping unreadable file %s: %s", rel, exc)
             continue
-        text = raw.decode("utf-8", errors="replace")
-        etag = compute_etag(text)
-        extractor = resolve_extractor(language)
-        extraction = extractor.extract(text, rel)
-        all_nodes.extend(extraction.nodes)
-        all_edges.extend(extraction.edges)
-        docstrings.update(extraction.docstrings)
+        rel, language, etag, node_rows, edge_rows, file_docstrings = result
+        all_nodes.extend(
+            Node.model_construct(**dict(zip(_NODE_FIELDS, row, strict=True)))
+            for row in node_rows
+        )
+        all_edges.extend(
+            Edge.model_construct(**dict(zip(_EDGE_FIELDS, row, strict=True)))
+            for row in edge_rows
+        )
+        docstrings.update(file_docstrings)
         file_rows.append((rel, language, etag))
         languages[language] = languages.get(language, 0) + 1
 

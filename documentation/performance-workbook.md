@@ -188,6 +188,48 @@ in the codebase, and peak memory went down rather than up, so one statement per
 table needs no chunking. At 128 files per second, a tree ten times the size of
 `~/Public` indexes in about five minutes; parallel extraction is the next lever.
 
+## Parallel extraction and a large codebase {#parallel-extraction}
+
+Extraction parses every file with tree-sitter or markdown-it. Markdown is
+82% of it on `~/Public` (12.0 s for 2,617 files, a 4.0 ms median, against 1.3 ms
+for a Python file), and markdown-it is pure Python, so threads would stay
+serialized behind the GIL. __Decision (shipped, #43).__ From 500 files on, the
+indexer extracts across a pool of spawned processes, one per core up to eight
+(`DUCKDB_CODE_WORKERS` overrides, `1` forces the sequential path), in chunks of
+64 files. Each worker returns plain tuples, which pickle in 0.12 s for all of
+`~/Public` against 0.90 s as models, and the parent merges the chunks in walk
+order, so the nodes, edges, and their order are identical to a sequential run;
+a test builds the fixture index both ways and compares the stored rows. A pool
+takes about 0.7 s to start, which is why trees under 500 files stay sequential.
+
+The large codebase is a workspace of three public repositories cloned at pinned
+commits, each with its last 500 commits: home-assistant/core (`81e94416815c`),
+microsoft/vscode (`aee59f2f5c11`), and apache/airflow (`51140809d2a7`). That is
+46,222 indexed files, 11.6 times `~/Public`, mostly Python and TypeScript.
+Wall-clock per phase, on an 8-core Apple M1 Pro:
+
+| Phase | `~/Public` sequential | `~/Public` parallel | Large sequential | Large parallel |
+| --- | --- | --- | --- | --- |
+| extract | 17.3 s | 5.7 s | 116.7 s | 47.7 s |
+| resolve edges | 1.0 s | 1.0 s | 66.8 s | 36.9 s |
+| derive test edges | 0.5 s | 0.5 s | 38.0 s | 40.0 s |
+| centrality | 0.9 s | 0.9 s | 35.5 s | 38.3 s |
+| embeddings | 7.6 s | 6.3 s | 25.1 s | 26.5 s |
+| write and the rest | 3.9 s | 3.8 s | 51.3 s | 51.8 s |
+| __total__ | __31.2 s__ | __18.2 s__ | __333.4 s__ | __241.2 s__ |
+| throughput | 128 files/s | 219 files/s | 139 files/s | 192 files/s |
+| peak resident memory | 1.7 GB | 2.4 GB | 5.2 GB | 5.6 GB |
+
+Both large runs store the same 948,430 nodes and 7,432,367 edges. Extraction is
+2.4 times faster on the large codebase and 3.0 times on `~/Public`, short of the
+core count, presumably because the parent rebuilds every node and edge from the
+returned tuples one at a time; peak memory grows by the results held in both
+forms. At this size the build is no longer led by extraction but by three
+whole-graph passes in Python, edge resolution, test-edge derivation, and
+centrality, which take 115 s together on the large codebase against 3 s on
+`~/Public`, and by 7.4 million edges, about 160 per file against 60 on
+`~/Public`. Those are the next levers, measured on the same corpus.
+
 ## Graph traversal at scale: recursive SQL or DuckPGQ {#graph-traversal}
 
 Once a large graph _exists_, the second question is how `impact` and `explain`

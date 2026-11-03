@@ -512,3 +512,50 @@ def test_bulk_loaded_index_matches_a_row_wise_build(tmp_path, monkeypatch):
     for table in reference:
         assert bulk[table] == reference[table], table
     assert reference["nodes"] and reference["edges"] and reference["vectors"]
+
+
+# Parallel extraction (a process pool over chunks of files) must give exactly
+# what the sequential walk gives, in the same order.
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("fixture", [FIXTURE, MARKDOWN_FIXTURE])
+def test_parallel_extraction_matches_sequential(fixture):
+    from duckdb_code.indexer import _extract_folder
+
+    sequential = _extract_folder(fixture, True, workers=1)
+    parallel = _extract_folder(fixture, True, workers=2, min_files=0, chunk_size=1)
+    assert parallel == sequential
+    rows, nodes, edges, _languages, _skipped, _docstrings = sequential
+    assert rows and nodes and edges
+
+
+@pytest.mark.slow
+def test_parallel_build_stores_the_same_rows(tmp_path, monkeypatch):
+    import duckdb_code.indexer as indexer
+
+    monkeypatch.setenv("DUCKDB_CODE_WORKERS", "1")
+    sequential_db = str(tmp_path / "sequential.duckdb")
+    store = CodeStore(db_path=sequential_db, root=str(FIXTURE), embedder="hashing")
+    index_folder(store, FIXTURE)
+    store.close()
+
+    monkeypatch.setenv("DUCKDB_CODE_WORKERS", "2")
+    monkeypatch.setattr(indexer, "_PARALLEL_MIN_FILES", 0)
+    parallel_db = str(tmp_path / "parallel.duckdb")
+    store = CodeStore(db_path=parallel_db, root=str(FIXTURE), embedder="hashing")
+    index_folder(store, FIXTURE)
+    store.close()
+
+    assert _graph_rows(parallel_db) == _graph_rows(sequential_db)
+
+
+def test_worker_count_honours_the_environment(monkeypatch):
+    from duckdb_code.indexer import _worker_count
+
+    monkeypatch.setenv("DUCKDB_CODE_WORKERS", "1")
+    assert _worker_count() == 1
+    monkeypatch.setenv("DUCKDB_CODE_WORKERS", "3")
+    assert _worker_count() == 3
+    monkeypatch.delenv("DUCKDB_CODE_WORKERS")
+    assert 1 <= _worker_count() <= 8

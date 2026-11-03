@@ -6,6 +6,16 @@ tag-driven: the released version comes from the git `vYYMMDD` tag via hatch-vcs.
 
 ## Unreleased
 
+### Changed
+
+- __Files are extracted in parallel.__ From 500 files on, the indexer parses
+  files across a pool of processes, one per core up to eight, and merges them
+  in walk order, so the graph is identical to a sequential run.
+  `DUCKDB_CODE_WORKERS` sets the pool size, and `1` keeps it sequential. A full
+  index of `~/Public` drops from 31 s to 18 s, and of a 46,222-file workspace of
+  home-assistant/core, microsoft/vscode, and apache/airflow from 333 s to
+  241 s (#43).
+
 ### Fixed
 
 - __`history` reports real co-change counts, Markdown included.__
