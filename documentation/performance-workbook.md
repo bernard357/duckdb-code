@@ -340,7 +340,7 @@ Results are reported as the median per question per arm.
 | Workspace | `~/Public`: 17 git repositories (13 at the top level, 4 nested under `_obsolete/` and `temp/`) plus personal folders |
 | Index | 3,980 files indexed (8,496 seen, 4,516 skipped by ignore rules): 2,617 Markdown, 1,276 Python, 84 TypeScript, 3 JavaScript. 71,624 nodes and 235,613 content edges (308,829 with the derived community and co-change edges), schema v7. Built once in 44 s with the default embedding model, `uvx` start-up included (31 s of indexing and 1.7 GB peak memory in the #42 profile), database 225 MB |
 | Hardware | Apple M1 Pro, 16 GB RAM, macOS 14.6.1 |
-| Run dates | _to be recorded_ |
+| Run dates | 2026-11-02, 22:49–23:29 (66 runs, arms interleaved) |
 
 The model is pinned because an auto-router can change the model from one request to the next, and that would swamp the difference between the arms. It runs through Bedrock's global inference route, which can process requests outside the EU; the regional `eu.` route for the same model was not reachable from the account used.
 
@@ -356,4 +356,31 @@ Fixed before any run:
 
 ### Results
 
-_Pending: the per-question table, aggregate medians and deltas, the measured overhead, a verdict against the success criteria, and the limitations are added here once the runs are complete._
+Three repetitions of every question in both arms, 66 runs, none failed; the spend was $21.36 (arm A $13.63, arm B $7.73). Medians per question, with correctness as the median grade:
+
+| Question | Context tokens A | Context tokens B | Δ context | Latency A (s) | Latency B (s) | Δ latency | `duckdb-code` calls B | Grade A | Grade B |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| q01 find by intent | 119,577 | 204,829 | +71% | 27.7 | 36.5 | +32% | 2 | 2 | 2 |
+| q02 impact | 286,666 | 231,807 | −19% | 35.6 | 25.8 | −27% | 2 | 2 | 2 |
+| q03 related tests | 420,928 | 152,789 | −64% | 45.7 | 24.5 | −46% | 4 | 2 | 2 |
+| q04 similar code | 124,031 | 146,752 | +18% | 15.4 | 19.2 | +24% | 0 | 2 | 2 |
+| q05 repository map | 392,981 | 376,274 | −4% | 77.6 | 63.3 | −18% | 0 | 2 | 2 |
+| q06 history | 612,122 | 100,030 | −84% | 80.7 | 17.2 | −79% | 1 | 2 | 2 |
+| q07 links | 194,347 | 252,962 | +30% | 25.2 | 23.1 | −9% | 4 | 2 | 2 |
+| q08 cycles | 597,001 | 86,496 | −86% | 59.9 | 13.5 | −77% | 2 | 0 | 2 |
+| q09 cross-repository | 475,196 | 431,450 | −9% | 36.0 | 35.1 | −3% | 0 | 2 | 2 |
+| q10 control | 190,113 | 121,367 | −36% | 16.5 | 12.3 | −25% | 0 | 2 | 2 |
+| q11 overhead probe | 33,650 | 39,912 | +19% | 3.2 | 3.8 | +20% | 0 | 2 | 2 |
+
+Across the nine structural questions (27 runs per arm), the median context drops from 372,864 to 179,035 tokens (−52%), the median latency from 40.8 s to 24.5 s (−40%), and the median number of model requests from 7 to 4. Correctness rises: 27 of 27 answers in arm B score 2, against 23 of 27 in arm A. The four arm A failures are one repository map that described the wrong repository and all three cycle answers, which analyzed import cycles only and missed the method recursion that `analytics cycles` reports.
+
+__Verdict: `duckdb-code` is a benefit on structural questions.__ It clears every criterion fixed before the runs: context tokens down 52% (the bar was 25%), latency down rather than up, and correctness no worse, better on cycles. The gains concentrate where the graph answers what files alone do not: history (−84% context), cycles (−86%), and related tests (−64%).
+
+__Where it costs.__ Find-by-intent (q01, +71%), similar code (q04, +18%), and links (q07, +30%) cost more context in arm B for the same grade: the agent calls `duckdb-code` and then reads the files anyway. The overhead probe puts the fixed price of the twelve tool descriptions at about 6,300 context tokens and 0.6 s per session. In 9 of the 27 structural B runs the agent made no `duckdb-code` call at all, every time on q04, q05, and q09, which are also the questions with the smallest gains; better tool routing is the lever there.
+
+__Limits.__
+
+- One model (Claude Opus 4.6 through Bedrock), one agent configuration, one workspace; three repetitions per arm give medians, not confidence intervals.
+- The control question q10 came out 36% cheaper in arm B with no `duckdb-code` call, so differences of that size on a single question can be noise; the structural aggregate is the robust figure.
+- Answers were graded by the agent that ran the benchmark, against the fixed rubrics, from shuffled answers with the arm hidden, with a written rationale per question audited by the author. The rubrics check the named items, so incorrect side claims, which appear in both arms, are not penalized.
+- A pilot of one repetition on 261101, before #38–#42, is not included: it ran on a different index and tool set.
